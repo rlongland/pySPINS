@@ -37,9 +37,9 @@ class ApparatusItem(QGraphicsRectItem, ABC):
         # Set position
         self.setPos(x, y)
 
-        # Make component selectable and movable (will be used in Phase 3)
+        # Make component selectable and movable
         self.setFlag(QGraphicsRectItem.GraphicsItemFlag.ItemIsSelectable, True)
-        self.setFlag(QGraphicsRectItem.GraphicsItemFlag.ItemIsMovable, False)  # Phase 3 will enable
+        self.setFlag(QGraphicsRectItem.GraphicsItemFlag.ItemIsMovable, True)  # Phase 3: enabled
 
         # Set visual appearance
         self.setBrush(QBrush(self._color))
