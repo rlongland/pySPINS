@@ -31,11 +31,13 @@ class Port(QGraphicsEllipseItem):
 
         self.eigenvalue = eigenvalue
         self._parent_item = parent_item
+        self.connection = None  # Connection object when port is connected
 
         # Visual styling (will be overridden by subclasses)
         self.setPen(QPen(QColor(self.PORT_COLOR), 2))
 
-        # Ports are selectable but not movable (they move with parent)
+        # Enable mouse events for wire drawing
+        self.setAcceptHoverEvents(True)
         self.setFlag(QGraphicsEllipseItem.GraphicsItemFlag.ItemIsSelectable, False)
 
     def set_position(self, x: float, y: float):
@@ -47,6 +49,14 @@ class Port(QGraphicsEllipseItem):
             y: Y coordinate relative to parent
         """
         self.setPos(x, y)
+
+    def get_canvas(self):
+        """Get the ExperimentCanvas this port belongs to."""
+        # Walk up the scene to find the view (canvas)
+        scene = self.scene()
+        if scene and scene.views():
+            return scene.views()[0]
+        return None
 
 
 class InputPort(Port):
@@ -79,6 +89,24 @@ class InputPort(Port):
         x = 0  # Left edge
         y = parent_height / 2 + vertical_offset
         self.set_position(x, y)
+
+    def mouseReleaseEvent(self, event):
+        """
+        Handle mouse release on input port to complete wire connection.
+
+        If in wire drawing mode and the source port is compatible,
+        creates a permanent connection.
+        """
+        from PySide6.QtCore import Qt
+
+        if event.button() == Qt.MouseButton.LeftButton:
+            canvas = self.get_canvas()
+            if canvas:
+                canvas.complete_wire_drawing(self)
+                event.accept()
+                return
+
+        super().mouseReleaseEvent(event)
 
 
 class OutputPort(Port):
@@ -113,3 +141,21 @@ class OutputPort(Port):
         x = parent_width  # Right edge
         y = parent_height / 2 + vertical_offset
         self.set_position(x, y)
+
+    def mousePressEvent(self, event):
+        """
+        Handle mouse press on output port to start wire drawing.
+
+        Creates a temporary wire that follows the mouse cursor until
+        released on an input port or cancelled.
+        """
+        from PySide6.QtCore import Qt
+
+        if event.button() == Qt.MouseButton.LeftButton:
+            canvas = self.get_canvas()
+            if canvas:
+                canvas.start_wire_drawing(self)
+                event.accept()
+                return
+
+        super().mousePressEvent(event)

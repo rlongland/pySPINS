@@ -2,7 +2,7 @@
 
 from abc import ABC, abstractmethod
 from PySide6.QtWidgets import QGraphicsRectItem, QGraphicsTextItem
-from PySide6.QtCore import QRectF, Qt
+from PySide6.QtCore import QRectF, Qt, QPointF
 from PySide6.QtGui import QBrush, QColor, QPen
 
 
@@ -108,3 +108,27 @@ class ApparatusItem(QGraphicsRectItem, ABC):
         """
         self._color = QColor(color)
         self.setBrush(QBrush(self._color))
+
+    def itemChange(self, change, value):
+        """
+        Handle item changes (e.g., position changes).
+
+        When component moves, update all connected wires to follow.
+        """
+        if change == QGraphicsRectItem.GraphicsItemChange.ItemPositionHasChanged:
+            # Update all wires connected to this component's ports
+            self._update_connected_wires()
+
+        return super().itemChange(change, value)
+
+    def _update_connected_wires(self):
+        """Update all wires connected to this component's ports."""
+        # Update wires from input ports
+        for port in self.input_ports:
+            if hasattr(port, 'connection') and port.connection is not None:
+                port.connection.wire_item.update_path()
+
+        # Update wires from output ports
+        for port in self.output_ports:
+            if hasattr(port, 'connection') and port.connection is not None:
+                port.connection.wire_item.update_path()
