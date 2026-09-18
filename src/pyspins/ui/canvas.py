@@ -5,6 +5,8 @@ from pyspins.ui.components.gun import ParticleGun
 from pyspins.ui.components.analyzer import SternGerlachAnalyzer
 from pyspins.ui.components.counter import ParticleCounter
 from pyspins.ui.port import InputPort, OutputPort
+from pyspins.physics.measurement import measure
+from pyspins.physics.operators import eigenstates
 
 
 class ExperimentCanvas(QGraphicsView):
@@ -60,17 +62,128 @@ class ExperimentCanvas(QGraphicsView):
 
         event.accept()
 
-    def run_batch(self):
-        """Run batch simulation (10k particles). To be implemented in later tasks."""
-        pass
+    def run_batch(self, n: int = 10_000):
+        """
+        Run batch simulation of n particles through the apparatus.
+
+        Walks the apparatus graph for each particle, performing measurements
+        and accumulating counts in terminal counters.
+
+        Args:
+            n: Number of particles to simulate (default: 10,000)
+        """
+        # Reset all counters before batch run
+        self.reset_counts()
+
+        # Simulate n particles
+        for _ in range(n):
+            self._simulate_single_particle()
 
     def run_single(self):
-        """Run single particle simulation. To be implemented in later tasks."""
-        pass
+        """
+        Run single particle simulation through the apparatus.
+
+        Simulates one particle's path through the apparatus, following
+        the measurement outcomes to determine which path is taken.
+        """
+        self._simulate_single_particle()
 
     def reset_counts(self):
-        """Reset all counter displays. To be implemented in later tasks."""
-        pass
+        """Reset all counter displays to zero."""
+        for component in self._components:
+            if isinstance(component, ParticleCounter):
+                component.reset()
+
+    def _simulate_single_particle(self):
+        """
+        Simulate a single particle's journey through the apparatus graph.
+
+        Algorithm:
+        1. Start at the gun, get initial state
+        2. Follow graph connections based on measurement outcomes
+        3. Increment counter when terminal component is reached
+        """
+        # Find the gun (source of particles)
+        gun = None
+        for component in self._components:
+            if isinstance(component, ParticleGun):
+                gun = component
+                break
+
+        if gun is None:
+            return  # No gun in apparatus
+
+        # Get initial state from gun
+        current_state = gun.simulate()
+        current_component = gun
+
+        # Walk the graph until we reach a terminal component
+        while current_state is not None:
+            # Find connections from current component
+            outgoing_connections = [
+                (src, output_idx, dest)
+                for src, output_idx, dest in self._apparatus_graph
+                if src == current_component
+            ]
+
+            if not outgoing_connections:
+                break  # Terminal component or dead end
+
+            # Determine next component based on current component type
+            if isinstance(current_component, ParticleGun):
+                # Gun has single output (index 0)
+                _, _, next_component = outgoing_connections[0]
+                current_component = next_component
+
+                # Process the next component
+                if isinstance(current_component, ParticleCounter):
+                    current_component.increment()
+                    break  # Terminal
+                else:
+                    current_state = current_component.simulate(current_state)
+
+            elif isinstance(current_component, SternGerlachAnalyzer):
+                # Perform measurement to determine which output path is taken
+                eigenvalue, post_state = measure(current_state, current_component.get_axis_vector())
+                current_state = post_state
+
+                # Determine which output index corresponds to this eigenvalue
+                # Eigenvalues are ordered descending: for spin-1/2: [+0.5, -0.5]
+                evals, _ = eigenstates(current_state.s, current_component.get_axis_vector())
+
+                # Find the index of this eigenvalue
+                # evals is a list of floats, find the closest match (handle floating point)
+                output_idx = None
+                for i, ev in enumerate(evals):
+                    if abs(ev - eigenvalue) < 1e-10:
+                        output_idx = i
+                        break
+
+                if output_idx is None:
+                    break  # Shouldn't happen, but safety check
+
+                # Find the connection with this output index
+                next_component = None
+                for src, idx, dest in outgoing_connections:
+                    if idx == output_idx:
+                        next_component = dest
+                        break
+
+                if next_component is None:
+                    break  # No connection for this output
+
+                current_component = next_component
+
+                # Process the next component
+                if isinstance(current_component, ParticleCounter):
+                    current_component.increment()
+                    break  # Terminal
+                else:
+                    current_state = current_component.simulate(current_state)
+
+            else:
+                # Unknown component type, shouldn't happen in Phase 2
+                break
 
     def _build_default_scene(self):
         """
