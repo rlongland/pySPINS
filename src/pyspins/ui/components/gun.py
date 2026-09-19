@@ -1,6 +1,7 @@
 """Particle gun component - emits particles in a specified spin state."""
 
 import numpy as np
+from PySide6.QtWidgets import QGraphicsSceneMouseEvent
 from pyspins.physics.states import SpinState
 from .base import ApparatusItem
 
@@ -72,3 +73,44 @@ class ParticleGun(ApparatusItem):
             state_vector: Complex numpy array representing the state
         """
         self._initial_state_vector = state_vector
+
+    def get_spin_type(self) -> float:
+        """Get the current spin type.
+
+        Returns:
+            Spin quantum number (0.5 or 1.0)
+        """
+        return self._spin_type
+
+    def get_initial_state_vector(self) -> np.ndarray:
+        """Get the current initial state vector.
+
+        Returns:
+            Complex numpy array representing the state
+        """
+        return self._initial_state_vector.copy()
+
+    def mouseDoubleClickEvent(self, event: QGraphicsSceneMouseEvent):
+        """Handle double-click to open state picker dialog."""
+        from pyspins.ui.dialogs import StatePickerDialog
+
+        dialog = StatePickerDialog(
+            current_spin_type=self._spin_type,
+            current_state_vector=self._initial_state_vector,
+            parent=None
+        )
+
+        if dialog.exec():
+            # Dialog accepted - update gun state
+            spin_type, state_vector = dialog.get_state()
+            self.set_spin_type(spin_type)
+            self.set_initial_state(state_vector)
+
+            # Update label to show spin type
+            if spin_type == 0.5:
+                self._label_item.setPlainText("Gun\n(s=1/2)")
+            else:
+                self._label_item.setPlainText("Gun\n(s=1)")
+
+        # Don't propagate to parent
+        event.accept()
