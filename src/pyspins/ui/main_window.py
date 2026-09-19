@@ -1,7 +1,8 @@
 from PySide6.QtWidgets import QMainWindow, QToolBar, QLabel, QFileDialog, QMessageBox
-from PySide6.QtGui import QAction, QKeySequence
+from PySide6.QtGui import QAction, QKeySequence, QIcon
 from pyspins.ui.canvas import ExperimentCanvas
 import json
+from pathlib import Path
 
 
 class MainWindow(QMainWindow):
@@ -18,15 +19,18 @@ class MainWindow(QMainWindow):
         # Track current file path for Save/Save As
         self._current_file_path = None
 
+        # Icon base path
+        self._icon_path = Path(__file__).parent.parent / "resources" / "icons"
+
         # Create menu bar
         self._create_menu_bar()
 
         # Simulation toolbar
         sim_toolbar = QToolBar("Simulation")
         self.addToolBar(sim_toolbar)
-        run_batch = QAction("Run Batch (10k)", self)
-        run_single = QAction("Run Single", self)
-        reset = QAction("Reset Counts", self)
+        run_batch = QAction(self._load_icon("run_batch.svg"), "Run Batch (10k)", self)
+        run_single = QAction(self._load_icon("run_single.svg"), "Run Single", self)
+        reset = QAction(self._load_icon("reset.svg"), "Reset Counts", self)
         run_batch.triggered.connect(lambda: self._canvas.run_batch())
         run_single.triggered.connect(lambda: self._canvas.run_single())
         reset.triggered.connect(lambda: self._canvas.reset_counts())
@@ -36,11 +40,11 @@ class MainWindow(QMainWindow):
         # Component toolbar (Req 26: separate buttons for spin-1/2 and spin-1 analyzers)
         comp_toolbar = QToolBar("Add Components")
         self.addToolBar(comp_toolbar)
-        add_gun = QAction("Add Gun", self)
-        add_analyzer_half = QAction("Add Analyzer (s=1/2)", self)
-        add_analyzer_one = QAction("Add Analyzer (s=1)", self)
-        add_magnet = QAction("Add Magnet", self)
-        add_counter = QAction("Add Counter", self)
+        add_gun = QAction(self._load_icon("add_gun.svg"), "Add Gun", self)
+        add_analyzer_half = QAction(self._load_icon("add_analyzer.svg"), "Add Analyzer (s=1/2)", self)
+        add_analyzer_one = QAction(self._load_icon("add_analyzer.svg"), "Add Analyzer (s=1)", self)
+        add_magnet = QAction(self._load_icon("add_magnet.svg"), "Add Magnet", self)
+        add_counter = QAction(self._load_icon("add_counter.svg"), "Add Counter", self)
         add_gun.triggered.connect(self._canvas.add_gun)
         add_analyzer_half.triggered.connect(lambda: self._canvas.add_analyzer(spin_type=0.5))
         add_analyzer_one.triggered.connect(lambda: self._canvas.add_analyzer(spin_type=1.0))
@@ -52,6 +56,21 @@ class MainWindow(QMainWindow):
         self._status = QLabel("Spin-1/2 | Ready")
         self.statusBar().addWidget(self._status)
 
+    def _load_icon(self, icon_name: str) -> QIcon:
+        """
+        Load an icon from the resources/icons directory.
+
+        Args:
+            icon_name: Name of the icon file (without path)
+
+        Returns:
+            QIcon object, or empty QIcon if file doesn't exist
+        """
+        icon_file = self._icon_path / icon_name
+        if icon_file.exists():
+            return QIcon(str(icon_file))
+        return QIcon()  # Empty icon as fallback
+
     def _create_menu_bar(self):
         """Create the menu bar with File menu."""
         menubar = self.menuBar()
@@ -60,19 +79,19 @@ class MainWindow(QMainWindow):
         file_menu = menubar.addMenu("&File")
 
         # Save action (Ctrl+S)
-        save_action = QAction("&Save", self)
+        save_action = QAction(self._load_icon("save.svg"), "&Save", self)
         save_action.setShortcut(QKeySequence.StandardKey.Save)
         save_action.triggered.connect(self._on_save)
         file_menu.addAction(save_action)
 
         # Save As action (Ctrl+Shift+S)
-        save_as_action = QAction("Save &As...", self)
+        save_as_action = QAction(self._load_icon("save.svg"), "Save &As...", self)
         save_as_action.setShortcut(QKeySequence.StandardKey.SaveAs)
         save_as_action.triggered.connect(self._on_save_as)
         file_menu.addAction(save_as_action)
 
         # Open action (Ctrl+O)
-        open_action = QAction("&Open...", self)
+        open_action = QAction(self._load_icon("open.svg"), "&Open...", self)
         open_action.setShortcut(QKeySequence.StandardKey.Open)
         open_action.triggered.connect(self._on_open)
         file_menu.addAction(open_action)
