@@ -33,3 +33,12 @@ dev = ["pytest>=8", "pytest-qt>=4"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/pyspins"]
+
+[tool.hatch.build.targets.sdist]
+exclude = [
+    "venv/",
+    ".venv/",
+    "*.log",
+    "ralph-logs/",
+    "demos/",
+]
