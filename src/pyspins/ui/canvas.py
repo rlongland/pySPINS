@@ -190,6 +190,9 @@ class ExperimentCanvas(QGraphicsView):
         # Add to apparatus graph
         self._apparatus_graph.append((source_component, output_index, dest_component))
 
+        # Update coherent mode checkboxes (topology may have changed)
+        self._update_coherent_checkboxes()
+
         # Clear wire drawing state
         self._drawing_wire = False
         self._temp_wire = None
@@ -294,6 +297,9 @@ class ExperimentCanvas(QGraphicsView):
         # Remove wire from scene
         self._scene.removeItem(wire_item)
 
+        # Update coherent mode checkboxes (topology may have changed)
+        self._update_coherent_checkboxes()
+
     def delete_component(self, component):
         """Remove a component and all its connected wires from the canvas."""
         # Collect wires attached to any of this component's ports
@@ -315,6 +321,9 @@ class ExperimentCanvas(QGraphicsView):
         # Remove from component list and scene
         self._components = [c for c in self._components if c is not component]
         self._scene.removeItem(component)
+
+        # Update coherent mode checkboxes (topology may have changed)
+        self._update_coherent_checkboxes()
 
     def run_batch(self, n: int = 10_000):
         """
@@ -458,6 +467,100 @@ class ExperimentCanvas(QGraphicsView):
             self._next_component_x = 100
             self._next_component_y += 100
 
+    def _update_coherent_checkboxes(self):
+        """
+        Update the visibility of coherent mode checkboxes on all analyzers.
+
+        Checkboxes are shown only on analyzers that have multiple incoming
+        connections from the same upstream analyzer (recombination points).
+        """
+        for component in self._components:
+            if isinstance(component, SternGerlachAnalyzer):
+                upstream_analyzer = self._all_inputs_from_same_analyzer(component)
+                should_show = upstream_analyzer is not None
+                component.update_coherent_checkbox_visibility(should_show)
+
+    def _all_inputs_from_same_analyzer(self, component):
+        """
+        Check if all incoming connections to this component come from outputs
+        of the same upstream analyzer.
+
+        This detects the coherent recombination topology where multiple output
+        ports of one analyzer all connect to inputs of this component.
+
+        Args:
+            component: Component to check (typically an analyzer)
+
+        Returns:
+            SternGerlachAnalyzer or None: The upstream analyzer if recombination
+                                          is detected, None otherwise
+        """
+        if not isinstance(component, SternGerlachAnalyzer):
+            return None
+
+        # Find all incoming connections to this component
+        incoming = [
+            (src, output_idx, dest)
+            for src, output_idx, dest in self._apparatus_graph
+            if dest == component
+        ]
+
+        if len(incoming) < 2:
+            # Need at least 2 paths for recombination
+            return None
+
+        # Check if all sources are the same component and it's an analyzer
+        sources = [src for src, _, _ in incoming]
+        first_source = sources[0]
+
+        if not isinstance(first_source, SternGerlachAnalyzer):
+            return None
+
+        if all(src == first_source for src in sources):
+            return first_source  # All paths come from the same analyzer
+
+        return None
+
+    def _get_coherent_recombination_target(self, analyzer):
+        """
+        Check if this analyzer's outputs recombine at a downstream analyzer
+        that has coherent mode enabled.
+
+        Args:
+            analyzer: SternGerlachAnalyzer to check
+
+        Returns:
+            SternGerlachAnalyzer or None: The downstream recombination analyzer
+                                          if coherent recombination is active
+        """
+        if not isinstance(analyzer, SternGerlachAnalyzer):
+            return None
+
+        # Find all outgoing connections from this analyzer
+        outgoing = [
+            (src, output_idx, dest)
+            for src, output_idx, dest in self._apparatus_graph
+            if src == analyzer
+        ]
+
+        if len(outgoing) < 2:
+            # Need at least 2 outputs for recombination
+            return None
+
+        # Check if all outputs go to the same component
+        destinations = [dest for _, _, dest in outgoing]
+        first_dest = destinations[0]
+
+        if not isinstance(first_dest, SternGerlachAnalyzer):
+            return None
+
+        if all(dest == first_dest for dest in destinations):
+            # All outputs go to the same analyzer
+            if first_dest.coherent_mode:
+                return first_dest
+
+        return None
+
     def _simulate_single_particle(self):
         """
         Simulate a single particle's journey through the apparatus graph.
@@ -465,7 +568,8 @@ class ExperimentCanvas(QGraphicsView):
         Algorithm:
         1. Start at the gun, get initial state
         2. Follow graph connections based on measurement outcomes
-        3. Increment counter when terminal component is reached
+        3. Handle coherent recombination (no collapse at intermediate analyzer)
+        4. Increment counter when terminal component is reached
         """
         # Find the gun (source of particles)
         gun = None
@@ -507,43 +611,60 @@ class ExperimentCanvas(QGraphicsView):
                     current_state = current_component.simulate(current_state)
 
             elif isinstance(current_component, SternGerlachAnalyzer):
-                # Perform measurement to determine which output path is taken
-                eigenvalue, post_state = measure(current_state, current_component.get_axis_vector())
-                current_state = post_state
+                # Check if this analyzer's outputs recombine coherently downstream
+                recombination_target = self._get_coherent_recombination_target(current_component)
 
-                # Determine which output index corresponds to this eigenvalue
-                # Eigenvalues are ordered descending: for spin-1/2: [+0.5, -0.5]
-                evals, _ = eigenstates(current_state.s, current_component.get_axis_vector())
+                if recombination_target:
+                    # Coherent recombination: Don't measure here, pass state through unchanged
+                    # Take the first available connection (all lead to same recombination point)
+                    _, _, next_component = outgoing_connections[0]
+                    current_component = next_component
 
-                # Find the index of this eigenvalue
-                # evals is a list of floats, find the closest match (handle floating point)
-                output_idx = None
-                for i, ev in enumerate(evals):
-                    if abs(ev - eigenvalue) < 1e-10:
-                        output_idx = i
-                        break
-
-                if output_idx is None:
-                    break  # Shouldn't happen, but safety check
-
-                # Find the connection with this output index
-                next_component = None
-                for src, idx, dest in outgoing_connections:
-                    if idx == output_idx:
-                        next_component = dest
-                        break
-
-                if next_component is None:
-                    break  # No connection for this output
-
-                current_component = next_component
-
-                # Process the next component
-                if isinstance(current_component, ParticleCounter):
-                    current_component.increment()
-                    break  # Terminal
+                    # Process the next component (should be the recombination analyzer)
+                    if isinstance(current_component, ParticleCounter):
+                        current_component.increment()
+                        break  # Terminal
+                    else:
+                        # State passes through unchanged - measurement happens at recombination point
+                        current_state = current_component.simulate(current_state)
                 else:
-                    current_state = current_component.simulate(current_state)
+                    # Incoherent (normal) mode: Perform measurement to determine path
+                    eigenvalue, post_state = measure(current_state, current_component.get_axis_vector())
+                    current_state = post_state
+
+                    # Determine which output index corresponds to this eigenvalue
+                    # Eigenvalues are ordered descending: for spin-1/2: [+0.5, -0.5]
+                    evals, _ = eigenstates(current_state.s, current_component.get_axis_vector())
+
+                    # Find the index of this eigenvalue
+                    # evals is a list of floats, find the closest match (handle floating point)
+                    output_idx = None
+                    for i, ev in enumerate(evals):
+                        if abs(ev - eigenvalue) < 1e-10:
+                            output_idx = i
+                            break
+
+                    if output_idx is None:
+                        break  # Shouldn't happen, but safety check
+
+                    # Find the connection with this output index
+                    next_component = None
+                    for src, idx, dest in outgoing_connections:
+                        if idx == output_idx:
+                            next_component = dest
+                            break
+
+                    if next_component is None:
+                        break  # No connection for this output
+
+                    current_component = next_component
+
+                    # Process the next component
+                    if isinstance(current_component, ParticleCounter):
+                        current_component.increment()
+                        break  # Terminal
+                    else:
+                        current_state = current_component.simulate(current_state)
 
             elif isinstance(current_component, SpinRotationMagnet):
                 # Magnet has single output (index 0), no measurement

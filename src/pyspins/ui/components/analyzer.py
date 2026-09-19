@@ -1,7 +1,8 @@
 """Stern-Gerlach analyzer component - measures spin along a specified axis."""
 
 import numpy as np
-from PySide6.QtWidgets import QGraphicsSceneMouseEvent
+from PySide6.QtWidgets import QGraphicsSceneMouseEvent, QCheckBox, QGraphicsProxyWidget
+from PySide6.QtCore import Qt
 from pyspins.physics.states import SpinState
 from pyspins.physics.measurement import measure
 from .base import ApparatusItem
@@ -43,6 +44,10 @@ class SternGerlachAnalyzer(ApparatusItem):
 
         # Coherent recombination mode (Phase 4 feature)
         self.coherent_mode = False
+
+        # Coherent mode checkbox (only shown when recombination is detected)
+        self._coherent_checkbox = None
+        self._checkbox_proxy = None
 
     def simulate(self, state: SpinState, output_index: int = 0) -> SpinState:
         """
@@ -119,6 +124,65 @@ class SternGerlachAnalyzer(ApparatusItem):
     def get_spin_type(self) -> float:
         """Get the spin type this analyzer is configured for."""
         return self._spin_type
+
+    def show_coherent_checkbox(self):
+        """
+        Show the coherent combination checkbox.
+
+        Called when the canvas detects that this analyzer is a recombination point
+        (multiple inputs from the same upstream analyzer).
+        """
+        if self._coherent_checkbox is not None:
+            return  # Already shown
+
+        # Create checkbox
+        self._coherent_checkbox = QCheckBox("Coherent combination")
+        self._coherent_checkbox.setChecked(self.coherent_mode)
+        self._coherent_checkbox.setStyleSheet("QCheckBox { background: white; padding: 2px; }")
+
+        # Connect to toggle method
+        self._coherent_checkbox.toggled.connect(self._on_coherent_toggled)
+
+        # Add to scene via proxy widget
+        self._checkbox_proxy = QGraphicsProxyWidget(self)
+        self._checkbox_proxy.setWidget(self._coherent_checkbox)
+
+        # Position below the component
+        self._checkbox_proxy.setPos(0, self.HEIGHT + 5)
+
+    def hide_coherent_checkbox(self):
+        """
+        Hide the coherent combination checkbox.
+
+        Called when the topology changes and this analyzer is no longer
+        a recombination point.
+        """
+        if self._coherent_checkbox is None:
+            return  # Already hidden
+
+        # Remove from scene
+        if self._checkbox_proxy:
+            self._checkbox_proxy.setParentItem(None)
+            self.scene().removeItem(self._checkbox_proxy)
+            self._checkbox_proxy = None
+
+        self._coherent_checkbox = None
+
+    def update_coherent_checkbox_visibility(self, should_show: bool):
+        """
+        Update checkbox visibility based on current topology.
+
+        Args:
+            should_show: True if checkbox should be visible, False otherwise
+        """
+        if should_show:
+            self.show_coherent_checkbox()
+        else:
+            self.hide_coherent_checkbox()
+
+    def _on_coherent_toggled(self, checked: bool):
+        """Handle coherent mode checkbox toggle."""
+        self.coherent_mode = checked
 
     def mouseDoubleClickEvent(self, event: QGraphicsSceneMouseEvent):
         """Open axis picker dialog on double-click."""
