@@ -745,3 +745,218 @@ class ExperimentCanvas(QGraphicsView):
         # Add components to scene
         for component in self._components:
             self._scene.addItem(component)
+
+    def to_json(self) -> dict:
+        """
+        Serialize scene to dict suitable for json.dumps.
+
+        Returns a dictionary with:
+        - version: file format version (1)
+        - components: list of component dicts with type, position, and parameters
+        - connections: list of (source_id, output_index, dest_id) tuples
+
+        Returns:
+            dict: Serialized scene data
+        """
+        import uuid
+
+        # Assign temporary UUIDs to components for connection references
+        component_ids = {comp: str(uuid.uuid4()) for comp in self._components}
+
+        # Serialize components
+        components_data = []
+        for component in self._components:
+            comp_id = component_ids[component]
+            comp_data = {
+                "id": comp_id,
+                "x": component.x(),
+                "y": component.y(),
+            }
+
+            if isinstance(component, ParticleGun):
+                comp_data["type"] = "gun"
+                comp_data["spin_type"] = component.get_spin_type()
+                comp_data["state_vector"] = component.get_initial_state_vector().tolist()
+
+            elif isinstance(component, SternGerlachAnalyzer):
+                comp_data["type"] = "analyzer"
+                comp_data["axis_label"] = component._axis_label
+                comp_data["phi_deg"] = component._phi_deg
+                comp_data["spin_type"] = component.get_spin_type()
+                comp_data["coherent_mode"] = component.coherent_mode
+
+            elif isinstance(component, SpinRotationMagnet):
+                comp_data["type"] = "magnet"
+                comp_data["beta"] = component.get_beta()
+
+            elif isinstance(component, ParticleCounter):
+                comp_data["type"] = "counter"
+                comp_data["label"] = component.label
+                comp_data["count"] = component._count
+
+            components_data.append(comp_data)
+
+        # Serialize connections
+        connections_data = []
+        for connection in self._connections:
+            source_comp = connection.source_port._parent_item
+            dest_comp = connection.dest_port._parent_item
+            source_id = component_ids[source_comp]
+            dest_id = component_ids[dest_comp]
+            output_index = source_comp.output_ports.index(connection.source_port)
+
+            connections_data.append({
+                "source_id": source_id,
+                "output_index": output_index,
+                "dest_id": dest_id,
+            })
+
+        return {
+            "version": 1,
+            "components": components_data,
+            "connections": connections_data,
+        }
+
+    def from_json(self, data: dict):
+        """
+        Restore scene from deserialized dict.
+
+        Clears the current scene and rebuilds components and connections
+        from the serialized data.
+
+        Args:
+            data: Dictionary from to_json() (after json.loads)
+        """
+        import numpy as np
+
+        # Validate version
+        if data.get("version") != 1:
+            raise ValueError(f"Unsupported file version: {data.get('version')}")
+
+        # Clear current scene
+        self.clear_scene()
+
+        # Map from serialized ID to recreated component
+        id_to_component = {}
+
+        # Recreate components
+        for comp_data in data["components"]:
+            comp_id = comp_data["id"]
+            comp_type = comp_data["type"]
+            x = comp_data["x"]
+            y = comp_data["y"]
+
+            if comp_type == "gun":
+                component = ParticleGun(x, y)
+                spin_type = comp_data["spin_type"]
+                state_vector = np.array(comp_data["state_vector"], dtype=complex)
+                component.set_spin_type(spin_type)
+                component.set_initial_state(state_vector)
+
+                # Create ports
+                gun_out = OutputPort(component, eigenvalue=0.5)
+                gun_out.position_on_right_edge(vertical_offset=0)
+                component.output_ports = [gun_out]
+
+            elif comp_type == "analyzer":
+                axis_label = comp_data["axis_label"]
+                phi_deg = comp_data["phi_deg"]
+                spin_type = comp_data["spin_type"]
+                component = SternGerlachAnalyzer(x, y, axis_label, phi_deg, spin_type)
+                component.coherent_mode = comp_data.get("coherent_mode", False)
+
+                # Create ports: 1 input, multiple outputs based on spin type
+                analyzer_in = InputPort(component)
+                analyzer_in.position_on_left_edge(vertical_offset=0)
+                component.input_ports = [analyzer_in]
+
+                if spin_type == 0.5:
+                    analyzer_out_upper = OutputPort(component, eigenvalue=0.5)
+                    analyzer_out_lower = OutputPort(component, eigenvalue=-0.5)
+                    analyzer_out_upper.position_on_right_edge(vertical_offset=-15)
+                    analyzer_out_lower.position_on_right_edge(vertical_offset=15)
+                    component.output_ports = [analyzer_out_upper, analyzer_out_lower]
+                else:  # spin_type == 1.0
+                    analyzer_out_plus = OutputPort(component, eigenvalue=1.0)
+                    analyzer_out_zero = OutputPort(component, eigenvalue=0.0)
+                    analyzer_out_minus = OutputPort(component, eigenvalue=-1.0)
+                    analyzer_out_plus.position_on_right_edge(vertical_offset=-20)
+                    analyzer_out_zero.position_on_right_edge(vertical_offset=0)
+                    analyzer_out_minus.position_on_right_edge(vertical_offset=20)
+                    component.output_ports = [analyzer_out_plus, analyzer_out_zero, analyzer_out_minus]
+
+            elif comp_type == "magnet":
+                component = SpinRotationMagnet(x, y)
+                component.set_beta(comp_data["beta"])
+
+                # Create ports
+                magnet_in = InputPort(component)
+                magnet_in.position_on_left_edge(vertical_offset=0)
+                component.input_ports = [magnet_in]
+
+                magnet_out = OutputPort(component, eigenvalue=0.5)
+                magnet_out.position_on_right_edge(vertical_offset=0)
+                component.output_ports = [magnet_out]
+
+            elif comp_type == "counter":
+                label = comp_data.get("label", "Counter")
+                component = ParticleCounter(x, y, label=label)
+                component.set_count(comp_data.get("count", 0))
+
+                # Create ports
+                counter_in = InputPort(component)
+                counter_in.position_on_left_edge(vertical_offset=0)
+                component.input_ports = [counter_in]
+
+            else:
+                raise ValueError(f"Unknown component type: {comp_type}")
+
+            # Add to scene and component list
+            self._scene.addItem(component)
+            self._components.append(component)
+            id_to_component[comp_id] = component
+
+        # Recreate connections
+        for conn_data in data["connections"]:
+            source_id = conn_data["source_id"]
+            dest_id = conn_data["dest_id"]
+            output_index = conn_data["output_index"]
+
+            source_comp = id_to_component[source_id]
+            dest_comp = id_to_component[dest_id]
+
+            source_port = source_comp.output_ports[output_index]
+            dest_port = dest_comp.input_ports[0]  # All components have single input
+
+            # Create wire
+            wire = WireItem(source_port, dest_port)
+            self._scene.addItem(wire)
+
+            # Create connection
+            connection = Connection(source_port, dest_port, wire)
+            self._connections.append(connection)
+
+            # Update apparatus graph
+            self._apparatus_graph.append((source_comp, output_index, dest_comp))
+
+        # Update coherent mode checkboxes based on topology
+        self._update_coherent_checkboxes()
+
+    def clear_scene(self):
+        """Clear all components and connections from the scene."""
+        # Remove all wires
+        for connection in list(self._connections):
+            self.delete_wire(connection.wire_item)
+
+        # Remove all components
+        for component in list(self._components):
+            self._scene.removeItem(component)
+
+        # Clear lists
+        self._components = []
+        self._connections = []
+        self._apparatus_graph = []
+
+        # Reset component placement position
+        self._next_component_x = 100
+        self._next_component_y = 100
