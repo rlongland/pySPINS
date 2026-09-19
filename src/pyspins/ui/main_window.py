@@ -1,6 +1,7 @@
 from PySide6.QtWidgets import QMainWindow, QToolBar, QLabel, QFileDialog, QMessageBox
 from PySide6.QtGui import QAction, QKeySequence, QIcon
 from pyspins.ui.canvas import ExperimentCanvas
+from pyspins.ui.dialogs import PhysicsReferenceDialog
 import json
 from pathlib import Path
 
@@ -72,7 +73,7 @@ class MainWindow(QMainWindow):
         return QIcon()  # Empty icon as fallback
 
     def _create_menu_bar(self):
-        """Create the menu bar with File menu."""
+        """Create the menu bar with File and Help menus."""
         menubar = self.menuBar()
 
         # File menu
@@ -103,6 +104,14 @@ class MainWindow(QMainWindow):
         exit_action.setShortcut(QKeySequence.StandardKey.Quit)
         exit_action.triggered.connect(self.close)
         file_menu.addAction(exit_action)
+
+        # Help menu
+        help_menu = menubar.addMenu("&Help")
+
+        # Physics Reference action
+        physics_ref_action = QAction("&Physics Reference", self)
+        physics_ref_action.triggered.connect(self._on_physics_reference)
+        help_menu.addAction(physics_ref_action)
 
     def _on_save(self):
         """Save the current scene to a file."""
@@ -190,3 +199,8 @@ class MainWindow(QMainWindow):
                 "Load Error",
                 f"Failed to load file:\n{str(e)}"
             )
+
+    def _on_physics_reference(self):
+        """Open the Physics Reference dialog."""
+        dialog = PhysicsReferenceDialog(self)
+        dialog.exec()
