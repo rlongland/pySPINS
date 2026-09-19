@@ -1,6 +1,8 @@
 """Spin rotation magnet component - applies rotation to spin states."""
 
+import math
 import numpy as np
+from PySide6.QtGui import QMouseEvent
 from pyspins.physics.states import SpinState
 from .base import ApparatusItem
 
@@ -24,7 +26,7 @@ class SpinRotationMagnet(ApparatusItem):
             x: Initial x position on canvas
             y: Initial y position on canvas
         """
-        super().__init__(label="Mag", color=self.COLOR, x=x, y=y)
+        super().__init__(label="Mag\nβ=0", color=self.COLOR, x=x, y=y)
 
         # Rotation angle in radians (0 = no rotation)
         self.beta = 0.0
@@ -58,9 +60,39 @@ class SpinRotationMagnet(ApparatusItem):
 
     def set_beta(self, beta: float):
         """
-        Set the rotation angle.
+        Set the rotation angle and update label.
 
         Args:
             beta: Rotation angle in radians (0 to 4π)
         """
         self.beta = beta
+        # Update label to show beta in terms of π for readability
+        beta_pi = beta / math.pi
+        self.label = f"Mag\nβ={beta_pi:.2f}π"
+        self.update()  # Trigger repaint to show new label
+
+    def get_beta(self) -> float:
+        """
+        Get the current rotation angle.
+
+        Returns:
+            Beta angle in radians (0 to 4π)
+        """
+        return self.beta
+
+    def mouseDoubleClickEvent(self, event: QMouseEvent):
+        """
+        Handle double-click to open magnet controls dialog.
+
+        Args:
+            event: Mouse event
+        """
+        from pyspins.ui.dialogs import MagnetControlsDialog
+
+        dialog = MagnetControlsDialog(current_beta=self.beta, parent=None)
+        if dialog.exec():
+            # User accepted - update beta
+            new_beta = dialog.get_beta()
+            self.set_beta(new_beta)
+
+        event.accept()
