@@ -37,10 +37,13 @@ class WireItem(QGraphicsPathItem):
 
     Draws a cubic Bezier curve from source port to destination port.
     The curve uses horizontal control points for smooth, natural-looking wiring.
+    Wire color indicates the eigenvalue it represents (Req 25).
     """
 
-    # Wire visual constants
-    WIRE_COLOR = "#1565c0"  # Blue (same as port color)
+    # Wire visual constants (Req 25: colored by eigenvalue)
+    WIRE_COLOR_PLUS = "#1565c0"   # Blue for + eigenvalue
+    WIRE_COLOR_MINUS = "#c62828"  # Red for − eigenvalue
+    WIRE_COLOR_ZERO = "#757575"   # Grey for 0 eigenvalue (spin-1 only)
     WIRE_WIDTH = 2
     WIRE_SELECT_COLOR = "#f57c00"  # Orange for selected wire
     HIT_DETECTION_WIDTH = 10  # Wider hit area (5px on each side)
@@ -58,8 +61,17 @@ class WireItem(QGraphicsPathItem):
         self.source_port = source_port
         self.dest_port = dest_port
 
+        # Determine wire color based on source port eigenvalue (Req 25)
+        eigenvalue = source_port.eigenvalue
+        if eigenvalue > 0.01:
+            wire_color = self.WIRE_COLOR_PLUS  # Blue for positive eigenvalue
+        elif eigenvalue < -0.01:
+            wire_color = self.WIRE_COLOR_MINUS  # Red for negative eigenvalue
+        else:
+            wire_color = self.WIRE_COLOR_ZERO  # Grey for zero eigenvalue (spin-1)
+
         # Visual styling
-        self._normal_pen = QPen(QColor(self.WIRE_COLOR), self.WIRE_WIDTH)
+        self._normal_pen = QPen(QColor(wire_color), self.WIRE_WIDTH)
         self._selected_pen = QPen(QColor(self.WIRE_SELECT_COLOR), self.WIRE_WIDTH + 1)
         self.setPen(self._normal_pen)
 
@@ -104,6 +116,8 @@ class WireItem(QGraphicsPathItem):
         """
         # Get port positions in scene coordinates
         start_pos = self.source_port.scenePos()
+        if self.dest_port is None:
+            return
         end_pos = self.dest_port.scenePos()
 
         # Calculate control points for Bezier curve

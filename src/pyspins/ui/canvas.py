@@ -1,6 +1,6 @@
 from PySide6.QtWidgets import QGraphicsView, QGraphicsScene
 from PySide6.QtCore import Qt, QPointF
-from PySide6.QtGui import QKeyEvent
+from PySide6.QtGui import QKeyEvent, QPainter
 
 from pyspins.ui.components.gun import ParticleGun
 from pyspins.ui.components.analyzer import SternGerlachAnalyzer
@@ -24,8 +24,8 @@ class ExperimentCanvas(QGraphicsView):
         self._scene.setSceneRect(-2000, -2000, 4000, 4000)
 
         # Enable smooth transformations
-        self.setRenderHint(self.RenderHint.Antialiasing)
-        self.setRenderHint(self.RenderHint.SmoothPixmapTransform)
+        self.setRenderHint(QPainter.RenderHint.Antialiasing)
+        self.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
 
         # Enable drag mode for panning
         self.setDragMode(QGraphicsView.DragMode.ScrollHandDrag)
@@ -84,15 +84,16 @@ class ExperimentCanvas(QGraphicsView):
         Delete key removes selected wire connections.
         """
         if event.key() in (Qt.Key.Key_Delete, Qt.Key.Key_Backspace):
-            # Get all selected items
             selected_items = self._scene.selectedItems()
 
-            # Filter for WireItem instances
-            selected_wires = [item for item in selected_items if isinstance(item, WireItem)]
+            # Delete selected wires first
+            for item in selected_items:
+                if isinstance(item, WireItem):
+                    self.delete_wire(item)
 
-            # Delete each selected wire
-            for wire in selected_wires:
-                self.delete_wire(wire)
+            # Delete selected components (and their connected wires)
+            for item in [i for i in selected_items if i in self._components]:
+                self.delete_component(item)
 
             event.accept()
         else:
@@ -103,14 +104,13 @@ class ExperimentCanvas(QGraphicsView):
         Handle mouse move events.
 
         During wire drawing, updates the temporary wire to follow the cursor.
+        The OutputPort item handles this via its own mouseMoveEvent; this is
+        a fallback for when the cursor leaves the port area.
         """
         if self._drawing_wire and self._temp_wire:
-            # Update temporary wire end point to current mouse position
             scene_pos = self.mapToScene(event.pos())
             self._temp_wire.set_temporary_end_point(scene_pos)
-            event.accept()
-        else:
-            super().mouseMoveEvent(event)
+        super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event):
         """
@@ -120,9 +120,11 @@ class ExperimentCanvas(QGraphicsView):
         cancels the wire drawing.
         """
         if self._drawing_wire:
-            # User released without hitting an input port - cancel wire drawing
-            self.cancel_wire_drawing()
-            event.accept()
+            # Let the scene dispatch to items first (OutputPort may complete the wire)
+            super().mouseReleaseEvent(event)
+            # If still drawing after items had a chance, no port was hit — cancel
+            if self._drawing_wire:
+                self.cancel_wire_drawing()
         else:
             super().mouseReleaseEvent(event)
 
@@ -192,6 +194,11 @@ class ExperimentCanvas(QGraphicsView):
         self._drawing_wire = False
         self._temp_wire = None
         self._wire_source_port = None
+
+    def update_wire_drawing(self, scene_pos):
+        """Update the temporary wire endpoint to follow the mouse."""
+        if self._temp_wire:
+            self._temp_wire.set_temporary_end_point(scene_pos)
 
     def cancel_wire_drawing(self):
         """
@@ -287,6 +294,28 @@ class ExperimentCanvas(QGraphicsView):
         # Remove wire from scene
         self._scene.removeItem(wire_item)
 
+    def delete_component(self, component):
+        """Remove a component and all its connected wires from the canvas."""
+        # Collect wires attached to any of this component's ports
+        all_ports = component.input_ports + component.output_ports
+        wires_to_delete = []
+        for conn in list(self._connections):
+            if conn.source_port in all_ports or conn.dest_port in all_ports:
+                wires_to_delete.append(conn.wire_item)
+        for wire in wires_to_delete:
+            self.delete_wire(wire)
+
+        # Remove from apparatus graph
+        self._apparatus_graph = [
+            (src, idx, dest)
+            for src, idx, dest in self._apparatus_graph
+            if src is not component and dest is not component
+        ]
+
+        # Remove from component list and scene
+        self._components = [c for c in self._components if c is not component]
+        self._scene.removeItem(component)
+
     def run_batch(self, n: int = 10_000):
         """
         Run batch simulation of n particles through the apparatus.
@@ -339,22 +368,41 @@ class ExperimentCanvas(QGraphicsView):
             self._next_component_x = 100
             self._next_component_y += 100
 
-    def add_analyzer(self):
-        """Add a new Stern-Gerlach analyzer to the canvas."""
-        # Create analyzer at next available position
-        analyzer = SternGerlachAnalyzer(self._next_component_x, self._next_component_y, axis_label="z")
+    def add_analyzer(self, spin_type: float = 0.5):
+        """
+        Add a new Stern-Gerlach analyzer to the canvas.
 
-        # Create ports: 1 input, 2 outputs for spin-1/2
+        Args:
+            spin_type: Spin type for the analyzer (0.5 or 1.0, default 0.5)
+        """
+        # Create analyzer at next available position
+        analyzer = SternGerlachAnalyzer(
+            self._next_component_x, self._next_component_y,
+            axis_label="+z", spin_type=spin_type
+        )
+
+        # Create ports: 1 input, multiple outputs based on spin type (Req 26)
         analyzer_in = InputPort(analyzer)
         analyzer_in.position_on_left_edge(vertical_offset=0)
         analyzer.input_ports = [analyzer_in]
 
-        # Output ports for spin-1/2 (+1/2 upper, -1/2 lower)
-        analyzer_out_upper = OutputPort(analyzer, eigenvalue=0.5)
-        analyzer_out_lower = OutputPort(analyzer, eigenvalue=-0.5)
-        analyzer_out_upper.position_on_right_edge(vertical_offset=-15)
-        analyzer_out_lower.position_on_right_edge(vertical_offset=15)
-        analyzer.output_ports = [analyzer_out_upper, analyzer_out_lower]
+        # Create output ports based on spin type (Req 26)
+        if spin_type == 0.5:
+            # Spin-1/2: 2 ports labeled "+" and "−"
+            analyzer_out_upper = OutputPort(analyzer, eigenvalue=0.5)
+            analyzer_out_lower = OutputPort(analyzer, eigenvalue=-0.5)
+            analyzer_out_upper.position_on_right_edge(vertical_offset=-15)
+            analyzer_out_lower.position_on_right_edge(vertical_offset=15)
+            analyzer.output_ports = [analyzer_out_upper, analyzer_out_lower]
+        else:  # spin_type == 1.0
+            # Spin-1: 3 ports labeled "+1", "0", "−1"
+            analyzer_out_plus = OutputPort(analyzer, eigenvalue=1.0)
+            analyzer_out_zero = OutputPort(analyzer, eigenvalue=0.0)
+            analyzer_out_minus = OutputPort(analyzer, eigenvalue=-1.0)
+            analyzer_out_plus.position_on_right_edge(vertical_offset=-20)
+            analyzer_out_zero.position_on_right_edge(vertical_offset=0)
+            analyzer_out_minus.position_on_right_edge(vertical_offset=20)
+            analyzer.output_ports = [analyzer_out_plus, analyzer_out_zero, analyzer_out_minus]
 
         # Add to scene and component list
         self._scene.addItem(analyzer)
@@ -528,7 +576,7 @@ class ExperimentCanvas(QGraphicsView):
 
         # Create components
         gun = ParticleGun(gun_x, gun_y)
-        sg_z = SternGerlachAnalyzer(sg_x, sg_y, axis_label="z")
+        sg_z = SternGerlachAnalyzer(sg_x, sg_y, axis_label="+z", spin_type=0.5)  # Spin-1/2 analyzer
         counter_upper = ParticleCounter(counter_upper_x, counter_upper_y, label="Counter(+z)")
         counter_lower = ParticleCounter(counter_lower_x, counter_lower_y, label="Counter(-z)")
 

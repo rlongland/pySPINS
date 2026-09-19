@@ -2,7 +2,7 @@
 
 from PySide6.QtWidgets import QGraphicsEllipseItem
 from PySide6.QtCore import Qt, QRectF
-from PySide6.QtGui import QBrush, QColor, QPen
+from PySide6.QtGui import QBrush, QColor, QPen, QPainterPath
 
 
 class Port(QGraphicsEllipseItem):
@@ -39,6 +39,15 @@ class Port(QGraphicsEllipseItem):
         # Enable mouse events for wire drawing
         self.setAcceptHoverEvents(True)
         self.setFlag(QGraphicsEllipseItem.GraphicsItemFlag.ItemIsSelectable, False)
+
+    # Larger invisible hit area so ports are easier to click
+    HIT_RADIUS = 10
+
+    def shape(self):
+        path = QPainterPath()
+        path.addEllipse(-self.HIT_RADIUS, -self.HIT_RADIUS,
+                        self.HIT_RADIUS * 2, self.HIT_RADIUS * 2)
+        return path
 
     def set_position(self, x: float, y: float):
         """
@@ -143,12 +152,6 @@ class OutputPort(Port):
         self.set_position(x, y)
 
     def mousePressEvent(self, event):
-        """
-        Handle mouse press on output port to start wire drawing.
-
-        Creates a temporary wire that follows the mouse cursor until
-        released on an input port or cancelled.
-        """
         from PySide6.QtCore import Qt
 
         if event.button() == Qt.MouseButton.LeftButton:
@@ -159,3 +162,34 @@ class OutputPort(Port):
                 return
 
         super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        canvas = self.get_canvas()
+        if canvas and canvas._drawing_wire:
+            canvas.update_wire_drawing(event.scenePos())
+            event.accept()
+            return
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        from PySide6.QtCore import Qt
+
+        if event.button() == Qt.MouseButton.LeftButton:
+            canvas = self.get_canvas()
+            if canvas and canvas._drawing_wire:
+                # Check if there's an InputPort under the cursor
+                scene = self.scene()
+                dest_port = None
+                if scene:
+                    for item in scene.items(event.scenePos()):
+                        if isinstance(item, InputPort):
+                            dest_port = item
+                            break
+                if dest_port:
+                    canvas.complete_wire_drawing(dest_port)
+                else:
+                    canvas.cancel_wire_drawing()
+                event.accept()
+                return
+
+        super().mouseReleaseEvent(event)

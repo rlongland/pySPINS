@@ -1,12 +1,11 @@
 """Abstract base class for apparatus components."""
 
-from abc import ABC, abstractmethod
 from PySide6.QtWidgets import QGraphicsRectItem, QGraphicsTextItem
 from PySide6.QtCore import QRectF, Qt, QPointF
 from PySide6.QtGui import QBrush, QColor, QPen
 
 
-class ApparatusItem(QGraphicsRectItem, ABC):
+class ApparatusItem(QGraphicsRectItem):
     """
     Abstract base class for all apparatus components.
 
@@ -75,7 +74,6 @@ class ApparatusItem(QGraphicsRectItem, ABC):
             self.CORNER_RADIUS
         )
 
-    @abstractmethod
     def simulate(self, state, output_index: int = 0):
         """
         Simulate particle passing through this component.
@@ -87,7 +85,7 @@ class ApparatusItem(QGraphicsRectItem, ABC):
         Returns:
             SpinState representing the outgoing particle, or None for counters
         """
-        pass
+        raise NotImplementedError
 
     def set_label(self, label: str):
         """Update the component's text label."""
