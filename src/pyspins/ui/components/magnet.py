@@ -38,22 +38,23 @@ class SpinRotationMagnet(ApparatusItem):
         """
         Apply rotation to the spin state.
 
-        For Phase 3: beta=0, so state passes through unchanged.
-        Phase 4 will implement rotation_operator application.
+        Applies rotation operator exp(-i * beta * Sx / hbar) where Sx is the
+        x-component of the spin operator. Uses hbar=1 convention.
 
         Args:
             state: Input SpinState to rotate
             output_index: Ignored (magnet has single output)
 
         Returns:
-            SpinState: Rotated state (currently unchanged)
+            SpinState: Rotated state after applying rotation operator
         """
-        # Phase 3 stub: pass through unchanged
-        # Phase 4 will add:
-        # from pyspins.physics.operators import rotation_operator
-        # R = rotation_operator(state.s, np.array([1, 0, 0.0]), self.beta)
-        # return SpinState(R @ state.vector, state.s)
-        return state
+        from pyspins.physics.operators import rotation_operator
+
+        # Apply rotation about x-axis by angle beta
+        # rotation_operator(s, axis, angle) returns exp(-i * angle * n̂·S / hbar)
+        x_axis = np.array([1.0, 0.0, 0.0])
+        R = rotation_operator(state.s, x_axis, self.beta)
+        return SpinState(R @ state.vector, state.s)
 
     def set_beta(self, beta: float):
         """
