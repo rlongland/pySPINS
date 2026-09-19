@@ -1,6 +1,6 @@
 from PySide6.QtWidgets import QGraphicsView, QGraphicsScene
-from PySide6.QtCore import Qt, QPointF
-from PySide6.QtGui import QKeyEvent, QPainter
+from PySide6.QtCore import Qt, QPointF, QRectF
+from PySide6.QtGui import QKeyEvent, QPainter, QImage
 
 from pyspins.ui.components.gun import ParticleGun
 from pyspins.ui.components.analyzer import SternGerlachAnalyzer
@@ -960,3 +960,44 @@ class ExperimentCanvas(QGraphicsView):
         # Reset component placement position
         self._next_component_x = 100
         self._next_component_y = 100
+
+    def export_to_png(self, file_path: str):
+        """
+        Export the current scene to a PNG image.
+
+        Args:
+            file_path: Path to save the PNG file
+
+        Uses QGraphicsScene.render() to draw the scene onto a QImage.
+        Only exports the bounding rect of items, not the full scene rect.
+        """
+        # Get the bounding rect of all items (avoid exporting huge empty scene)
+        items_rect = self._scene.itemsBoundingRect()
+
+        # Add padding around the content (20px on each side)
+        padding = 20
+        export_rect = items_rect.adjusted(-padding, -padding, padding, padding)
+
+        # Create QImage with appropriate size
+        # Use 2x scaling for high-DPI export
+        scale_factor = 2.0
+        image_width = int(export_rect.width() * scale_factor)
+        image_height = int(export_rect.height() * scale_factor)
+
+        image = QImage(image_width, image_height, QImage.Format.Format_ARGB32)
+        image.fill(Qt.GlobalColor.white)  # White background
+
+        # Create painter and render scene onto image
+        painter = QPainter(image)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+
+        # Scale up for high-DPI
+        painter.scale(scale_factor, scale_factor)
+
+        # Render the scene
+        self._scene.render(painter, QRectF(), export_rect)
+        painter.end()
+
+        # Save to file
+        image.save(file_path, "PNG")

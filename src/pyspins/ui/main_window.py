@@ -99,6 +99,13 @@ class MainWindow(QMainWindow):
 
         file_menu.addSeparator()
 
+        # Export as PNG action
+        export_png_action = QAction("&Export as PNG...", self)
+        export_png_action.triggered.connect(self._on_export_png)
+        file_menu.addAction(export_png_action)
+
+        file_menu.addSeparator()
+
         # Exit action
         exit_action = QAction("E&xit", self)
         exit_action.setShortcut(QKeySequence.StandardKey.Quit)
@@ -154,6 +161,31 @@ class MainWindow(QMainWindow):
 
         if file_path:
             self._load_from_file(file_path)
+
+    def _on_export_png(self):
+        """Export the current scene as a PNG image."""
+        file_path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Export as PNG",
+            "",
+            "PNG Images (*.png);;All Files (*)"
+        )
+
+        if file_path:
+            # Ensure .png extension
+            if not file_path.endswith('.png'):
+                file_path += '.png'
+
+            try:
+                self._canvas.export_to_png(file_path)
+                self._status.setText(f"Exported to {file_path}")
+
+            except Exception as e:
+                QMessageBox.critical(
+                    self,
+                    "Export Error",
+                    f"Failed to export image:\n{str(e)}"
+                )
 
     def _save_to_file(self, file_path: str):
         """
