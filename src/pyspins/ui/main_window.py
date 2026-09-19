@@ -1,7 +1,7 @@
 from PySide6.QtWidgets import QMainWindow, QToolBar, QLabel, QFileDialog, QMessageBox
 from PySide6.QtGui import QAction, QKeySequence, QIcon
 from pyspins.ui.canvas import ExperimentCanvas
-from pyspins.ui.dialogs import PhysicsReferenceDialog
+from pyspins.ui.dialogs import PhysicsReferenceDialog, AboutDialog
 import json
 from pathlib import Path
 
@@ -113,6 +113,11 @@ class MainWindow(QMainWindow):
         physics_ref_action.triggered.connect(self._on_physics_reference)
         help_menu.addAction(physics_ref_action)
 
+        # About action
+        about_action = QAction("&About pySPINS", self)
+        about_action.triggered.connect(self._on_about)
+        help_menu.addAction(about_action)
+
     def _on_save(self):
         """Save the current scene to a file."""
         if self._current_file_path is None:
@@ -203,4 +208,9 @@ class MainWindow(QMainWindow):
     def _on_physics_reference(self):
         """Open the Physics Reference dialog."""
         dialog = PhysicsReferenceDialog(self)
+        dialog.exec()
+
+    def _on_about(self):
+        """Open the About dialog."""
+        dialog = AboutDialog(self)
         dialog.exec()
