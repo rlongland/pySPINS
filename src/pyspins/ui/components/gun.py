@@ -52,9 +52,9 @@ class ParticleGun(ApparatusItem):
         """
         super().__init__(label="", color=self.COLOR, x=x, y=y)
 
-        # Default state: spin-1/2 |+z⟩
+        # Default state: spin-1/2 |+x⟩
         self._spin_type = 0.5
-        self._initial_state_vector = SpinState.HALF_PLUS_Z
+        self._initial_state_vector = SpinState.HALF_PLUS_X
         # Set to "A"–"D" while the gun emits one of the unknown states, whose
         # identity must stay hidden from the student.
         self._unknown_label = None
@@ -74,7 +74,7 @@ class ParticleGun(ApparatusItem):
             raise ValueError("Spin type must be 0.5 or 1.0")
         self._spin_type = s
         if s == 0.5:
-            self._initial_state_vector = SpinState.HALF_PLUS_Z
+            self._initial_state_vector = SpinState.HALF_PLUS_X
         else:
             self._initial_state_vector = SpinState.ONE_PLUS
         self._refresh_label()

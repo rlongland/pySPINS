@@ -24,6 +24,11 @@ def empty_canvas(canvas):
     return canvas
 
 
+def _fire_plus_z(canvas):
+    """Point the default gun along +z, for a deterministic 100/0 experiment."""
+    canvas._components[0].set_initial_state(SpinState.HALF_PLUS_Z.copy())
+
+
 def _wires(canvas):
     return [item for item in canvas.scene().items() if isinstance(item, WireItem)]
 
@@ -48,6 +53,7 @@ def test_default_scene_ports_are_occupied(canvas):
 
 
 def test_default_scene_wire_can_be_deleted(canvas):
+    _fire_plus_z(canvas)
     upper = canvas._connections[1]
     canvas.delete_wire(upper.wire_item)
     assert len(canvas._connections) == 2
@@ -63,6 +69,16 @@ def test_default_scene_saves_connections(canvas):
 
 
 def test_default_scene_batch(canvas):
+    """The default gun fires |+x>, so SGz splits it evenly."""
+    canvas.run_batch(1000)
+    upper, lower = sorted(_counters(canvas), key=lambda c: c.y())
+    assert upper.get_count() + lower.get_count() == 1000
+    assert upper.get_count() == pytest.approx(500, abs=80)
+
+
+def test_default_scene_batch_with_a_plus_z_gun(canvas):
+    """Experiment 1: |+z> measured along z lands entirely in the upper counter."""
+    _fire_plus_z(canvas)
     canvas.run_batch(1000)
     upper, lower = sorted(_counters(canvas), key=lambda c: c.y())
     assert upper.get_count() == 1000
@@ -78,6 +94,7 @@ def test_run_single_adds_one_particle(canvas):
 def _build_recombination(canvas):
     """Gun(+z) → SGz(+) → SGx (both outputs into) → SGz → two counters."""
     gun = canvas.add_gun(0, 0)
+    gun.set_initial_state(SpinState.HALF_PLUS_Z.copy())
     z1 = canvas.add_analyzer(0.5, 100, 0)
     x = canvas.add_analyzer(0.5, 200, 0, axis_label="+x")
     z2 = canvas.add_analyzer(0.5, 300, 0)
@@ -240,6 +257,7 @@ def test_picker_preselects_current_state(qapp):
 
 
 def test_counters_show_their_share(canvas):
+    _fire_plus_z(canvas)
     upper, lower = sorted(_counters(canvas), key=lambda c: c.y())
     canvas.run_batch(500)
     assert upper.get_share() == pytest.approx(1.0)
@@ -250,6 +268,7 @@ def test_counters_show_their_share(canvas):
 
 def test_counter_shares_split_on_a_50_50_experiment(empty_canvas):
     gun = empty_canvas.add_gun(0, 0)
+    gun.set_initial_state(SpinState.HALF_PLUS_Z.copy())
     sg = empty_canvas.add_analyzer(0.5, 100, 0, axis_label="+x")
     up = empty_canvas.add_counter(200, -50)
     down = empty_canvas.add_counter(200, 50)
@@ -276,6 +295,7 @@ def _highlighted(canvas):
 
 def test_single_shot_highlights_the_path_taken(canvas):
     gun, sg, upper, lower = canvas._components
+    _fire_plus_z(canvas)
     canvas.run_single()
 
     # |+z> on SGz always lands in the upper counter, never the lower one
