@@ -55,6 +55,9 @@ class ParticleGun(ApparatusItem):
         # Default state: spin-1/2 |+z⟩
         self._spin_type = 0.5
         self._initial_state_vector = SpinState.HALF_PLUS_Z
+        # Set to "A"–"D" while the gun emits one of the unknown states, whose
+        # identity must stay hidden from the student.
+        self._unknown_label = None
 
         # Gun has no input ports, one output port (right side)
         self.input_ports = []
@@ -76,8 +79,16 @@ class ParticleGun(ApparatusItem):
             self._initial_state_vector = SpinState.ONE_PLUS
         self._refresh_label()
 
-    def set_initial_state(self, state_vector: np.ndarray):
+    def set_initial_state(self, state_vector: np.ndarray, unknown_label: str | None = None):
+        """Set the emitted state.
+
+        Args:
+            state_vector: The state to emit
+            unknown_label: "A"–"D" if this is an unknown state, so the label
+                           shows the letter instead of the state itself
+        """
         self._initial_state_vector = state_vector
+        self._unknown_label = unknown_label
         self._refresh_label()
 
     def _center_text(self):
@@ -90,7 +101,7 @@ class ParticleGun(ApparatusItem):
     def _refresh_label(self):
         """Update text to show spin type and state label."""
         s_str = "½" if self._spin_type == 0.5 else "1"
-        state_str = _state_label(self._initial_state_vector)
+        state_str = self._unknown_label or _state_label(self._initial_state_vector)
         self.set_label(f"s={s_str}\n{state_str}")
 
     def paint(self, painter, option, widget=None):
@@ -142,6 +153,10 @@ class ParticleGun(ApparatusItem):
         """
         return self._initial_state_vector.copy()
 
+    def get_unknown_label(self) -> str | None:
+        """Return "A"–"D" if the gun emits an unknown state, else None."""
+        return self._unknown_label
+
     def mouseDoubleClickEvent(self, event: QGraphicsSceneMouseEvent):
         """Handle double-click to open state picker dialog."""
         from pyspins.ui.dialogs import StatePickerDialog
@@ -149,13 +164,14 @@ class ParticleGun(ApparatusItem):
         dialog = StatePickerDialog(
             current_spin_type=self._spin_type,
             current_state_vector=self._initial_state_vector,
+            current_unknown=self._unknown_label,
             parent=None
         )
 
         if dialog.exec():
             spin_type, state_vector = dialog.get_state()
             self.set_spin_type(spin_type)
-            self.set_initial_state(state_vector)
+            self.set_initial_state(state_vector, dialog.get_unknown_label())
 
         # Don't propagate to parent
         event.accept()

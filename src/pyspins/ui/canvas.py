@@ -10,6 +10,7 @@ from pyspins.ui.components.magnet import SpinRotationMagnet
 from pyspins.ui.port import InputPort, OutputPort
 from pyspins.ui.connections import Connection, WireItem
 from pyspins.physics.network import LOST, outcome_probabilities
+from pyspins.physics.states import UNKNOWN_STATES
 
 
 class ExperimentCanvas(QGraphicsView):
@@ -504,10 +505,15 @@ class ExperimentCanvas(QGraphicsView):
             if isinstance(component, ParticleGun):
                 comp_data["type"] = "gun"
                 comp_data["spin_type"] = component.get_spin_type()
-                # JSON has no complex type: store each amplitude as [re, im]
-                comp_data["state_vector"] = [
-                    [amp.real, amp.imag] for amp in component.get_initial_state_vector()
-                ]
+                unknown = component.get_unknown_label()
+                if unknown:
+                    # Save the letter only, so the file does not reveal the state
+                    comp_data["unknown"] = unknown
+                else:
+                    # JSON has no complex type: store each amplitude as [re, im]
+                    comp_data["state_vector"] = [
+                        [amp.real, amp.imag] for amp in component.get_initial_state_vector()
+                    ]
 
             elif isinstance(component, SternGerlachAnalyzer):
                 comp_data["type"] = "analyzer"
@@ -579,9 +585,15 @@ class ExperimentCanvas(QGraphicsView):
             if comp_type == "gun":
                 component = self.add_gun(x, y)
                 component.set_spin_type(comp_data["spin_type"])
-                component.set_initial_state(np.array(
-                    [complex(*amp) for amp in comp_data["state_vector"]], dtype=complex
-                ))
+                unknown = comp_data.get("unknown")
+                if unknown:
+                    if unknown not in UNKNOWN_STATES:
+                        raise ValueError(f"Unknown state: {unknown}")
+                    component.set_initial_state(UNKNOWN_STATES[unknown].copy(), unknown)
+                else:
+                    component.set_initial_state(np.array(
+                        [complex(*amp) for amp in comp_data["state_vector"]], dtype=complex
+                    ))
 
             elif comp_type == "analyzer":
                 component = self.add_analyzer(

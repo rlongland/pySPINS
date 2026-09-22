@@ -7,7 +7,7 @@ from PySide6.QtWidgets import (
     QLineEdit, QDialogButtonBox
 )
 from PySide6.QtCore import Qt
-from pyspins.physics.states import SpinState
+from pyspins.physics.states import UNKNOWN_STATES, SpinState
 
 
 class StatePickerDialog(QDialog):
@@ -21,21 +21,15 @@ class StatePickerDialog(QDialog):
     PRESET_HALF = ["+z", "-z", "+x", "-x", "+y", "-y", "custom", "A", "B", "C", "D"]
     PRESET_ONE = ["+1", "0", "-1", "custom"]
 
-    # Unknown states hidden from student (from OSP curriculum activities)
-    # These are pedagogically important - students experimentally determine what they are
-    _UNKNOWN = {
-        "A": np.array([1, 0], dtype=complex),  # |+z>
-        "B": np.array([1, 1], dtype=complex) / np.sqrt(2),  # |+x>
-        "C": np.array([1, 1j], dtype=complex) / np.sqrt(2),  # |+y>
-        "D": np.array([np.cos(np.pi / 8), np.sin(np.pi / 8)], dtype=complex),  # Custom state
-    }
 
-    def __init__(self, current_spin_type: float = 0.5, current_state_vector=None, parent=None):
+    def __init__(self, current_spin_type: float = 0.5, current_state_vector=None,
+                 current_unknown: str | None = None, parent=None):
         """Initialize state picker dialog.
 
         Args:
             current_spin_type: Initial spin type (0.5 or 1.0)
             current_state_vector: Initial state vector (numpy array), or None for default
+            current_unknown: "A"–"D" if the current state is an unknown one
             parent: Parent widget
         """
         super().__init__(parent)
@@ -46,6 +40,7 @@ class StatePickerDialog(QDialog):
         # Store current selections
         self._current_spin_type = current_spin_type
         self._current_state_vector = current_state_vector
+        self._current_unknown = current_unknown
 
         # Main layout
         layout = QVBoxLayout(self)
@@ -156,6 +151,35 @@ class StatePickerDialog(QDialog):
         else:
             self._state_combo.addItems(self.PRESET_ONE)
 
+        self._select_current_state()
+
+    def _select_current_state(self):
+        """Preselect the state the gun is currently emitting."""
+        if self._current_unknown:
+            self._state_combo.setCurrentText(self._current_unknown)
+            return
+        if self._current_state_vector is None:
+            return
+        for i in range(self._state_combo.count()):
+            label = self._state_combo.itemText(i)
+            if label in ("custom",) or label in UNKNOWN_STATES:
+                continue
+            preset = self._preset_vector(label)
+            if preset is not None and preset.shape == self._current_state_vector.shape \
+                    and np.allclose(preset, self._current_state_vector):
+                self._state_combo.setCurrentIndex(i)
+                return
+
+    def _preset_vector(self, label: str):
+        """State vector for a preset label, or None if it is not a preset."""
+        presets = {
+            "+z": SpinState.HALF_PLUS_Z, "-z": SpinState.HALF_MINUS_Z,
+            "+x": SpinState.HALF_PLUS_X, "-x": SpinState.HALF_MINUS_X,
+            "+y": SpinState.HALF_PLUS_Y, "-y": SpinState.HALF_MINUS_Y,
+            "+1": SpinState.ONE_PLUS, "0": SpinState.ONE_ZERO, "-1": SpinState.ONE_MINUS,
+        }
+        return presets.get(label)
+
     def _update_custom_visibility(self):
         """Show custom entry fields only when 'custom' is selected."""
         is_custom = self._state_combo.currentText() == "custom"
@@ -209,28 +233,18 @@ class StatePickerDialog(QDialog):
                     components.append(0.0 + 0.0j)
             state_vector = np.array(components, dtype=complex)
 
-        elif state_label in self._UNKNOWN:
+        elif state_label in UNKNOWN_STATES:
             # Unknown state (A, B, C, D)
-            state_vector = self._UNKNOWN[state_label].copy()
+            state_vector = UNKNOWN_STATES[state_label].copy()
 
         else:
-            # Preset state - use basis vectors from SpinState class
-            if spin_type == 0.5:
-                state_map = {
-                    "+z": SpinState.HALF_PLUS_Z,
-                    "-z": SpinState.HALF_MINUS_Z,
-                    "+x": SpinState.HALF_PLUS_X,
-                    "-x": SpinState.HALF_MINUS_X,
-                    "+y": SpinState.HALF_PLUS_Y,
-                    "-y": SpinState.HALF_MINUS_Y,
-                }
-                state_vector = state_map.get(state_label, SpinState.HALF_PLUS_Z).copy()
-            else:  # spin-1
-                state_map = {
-                    "+1": SpinState.ONE_PLUS,
-                    "0": SpinState.ONE_ZERO,
-                    "-1": SpinState.ONE_MINUS,
-                }
-                state_vector = state_map.get(state_label, SpinState.ONE_PLUS).copy()
+            default = SpinState.HALF_PLUS_Z if spin_type == 0.5 else SpinState.ONE_PLUS
+            preset = self._preset_vector(state_label)
+            state_vector = (default if preset is None else preset).copy()
 
         return (spin_type, state_vector)
+
+    def get_unknown_label(self) -> str | None:
+        """Return "A"–"D" if an unknown state was chosen, else None."""
+        label = self._state_combo.currentText()
+        return label if label in UNKNOWN_STATES else None

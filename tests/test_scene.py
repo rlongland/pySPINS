@@ -5,10 +5,12 @@ import json
 import pytest
 
 from pyspins.physics.network import LOST
+from pyspins.physics.states import UNKNOWN_STATES, SpinState
 from pyspins.ui.canvas import ExperimentCanvas
 from pyspins.ui.components.analyzer import SternGerlachAnalyzer
 from pyspins.ui.components.counter import ParticleCounter
 from pyspins.ui.connections import WireItem
+from pyspins.ui.dialogs import StatePickerDialog
 
 
 @pytest.fixture
@@ -183,3 +185,55 @@ def test_from_json_rejects_invalid_connection(empty_canvas):
     with pytest.raises(ValueError):
         empty_canvas.from_json(data)
 
+
+def test_unknown_state_is_not_revealed_by_the_gun(canvas):
+    gun = canvas._components[0]
+    gun.set_initial_state(UNKNOWN_STATES["B"].copy(), "B")
+    assert gun.label == "s=½\nB"
+    assert "x" not in gun.label
+
+    # ... and the gun still emits it
+    assert gun.emit().vector == pytest.approx(SpinState.HALF_PLUS_X)
+
+
+def test_unknown_state_is_not_revealed_by_the_save_file(canvas):
+    gun = canvas._components[0]
+    gun.set_initial_state(UNKNOWN_STATES["D"].copy(), "D")
+    saved = json.dumps(canvas.to_json())
+    assert '"unknown": "D"' in saved
+    assert "state_vector" not in saved
+    for amplitude in UNKNOWN_STATES["D"]:
+        assert repr(amplitude.real) not in saved
+
+
+def test_unknown_state_survives_round_trip(canvas):
+    canvas._components[0].set_initial_state(UNKNOWN_STATES["C"].copy(), "C")
+    data = json.loads(json.dumps(canvas.to_json()))
+
+    restored = ExperimentCanvas()
+    restored.from_json(data)
+    gun = restored._components[0]
+    assert gun.get_unknown_label() == "C"
+    assert gun.emit().vector == pytest.approx(UNKNOWN_STATES["C"])
+
+
+def test_known_state_is_still_labelled(canvas):
+    gun = canvas._components[0]
+    gun.set_initial_state(SpinState.HALF_MINUS_Y.copy())
+    assert gun.label == "s=½\n|-y⟩"
+    assert gun.get_unknown_label() is None
+
+
+def test_picker_reports_unknown_letter(qapp):
+    dialog = StatePickerDialog()
+    dialog._state_combo.setCurrentText("A")
+    spin_type, vector = dialog.get_state()
+    assert dialog.get_unknown_label() == "A"
+    assert vector == pytest.approx(UNKNOWN_STATES["A"])
+
+
+def test_picker_preselects_current_state(qapp):
+    assert StatePickerDialog(0.5, SpinState.HALF_MINUS_X.copy())._state_combo.currentText() == "-x"
+    assert StatePickerDialog(1.0, SpinState.ONE_ZERO.copy())._state_combo.currentText() == "0"
+    dialog = StatePickerDialog(0.5, UNKNOWN_STATES["B"].copy(), current_unknown="B")
+    assert dialog._state_combo.currentText() == "B"

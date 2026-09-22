@@ -58,3 +58,13 @@ class SpinState:
 
     def __repr__(self) -> str:
         return f"SpinState(s={self.s}, vector={self.vector})"
+
+
+#: The four "unknown" states students identify experimentally (OSP curriculum).
+#: Edit here to change what A–D are; nothing else hard-codes them.
+UNKNOWN_STATES: dict[str, np.ndarray] = {
+    "A": SpinState.HALF_PLUS_Z.copy(),
+    "B": SpinState.HALF_PLUS_X.copy(),
+    "C": SpinState.HALF_PLUS_Y.copy(),
+    "D": np.array([np.cos(np.pi / 8), np.sin(np.pi / 8)], dtype=complex),
+}
