@@ -42,3 +42,6 @@ exclude = [
     "ralph-logs/",
     "demos/",
 ]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
