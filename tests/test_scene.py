@@ -268,3 +268,54 @@ def test_reset_clears_shares(canvas):
     canvas.reset_counts()
     assert all(c.get_share() == 0.0 for c in _counters(canvas))
     assert canvas.particles_fired() == 0
+
+
+def _highlighted(canvas):
+    return {w for w in _wires(canvas) if w.is_highlighted()}
+
+
+def test_single_shot_highlights_the_path_taken(canvas):
+    gun, sg, upper, lower = canvas._components
+    canvas.run_single()
+
+    # |+z> on SGz always lands in the upper counter, never the lower one
+    assert upper.get_count() == 1
+    highlighted = _highlighted(canvas)
+    assert len(highlighted) == 2
+    lower_wire = lower.input_ports[0].connections[0].wire_item
+    assert lower_wire not in highlighted
+
+
+def test_batch_clears_highlighting(canvas):
+    canvas.run_single()
+    assert _highlighted(canvas)
+    canvas.run_batch(100)
+    assert not _highlighted(canvas)
+
+
+def test_blocked_particle_highlights_nothing(empty_canvas):
+    gun = empty_canvas.add_gun(0, 0)
+    sg = empty_canvas.add_analyzer(0.5, 100, 0)
+    empty_canvas.connect_ports(gun.output_ports[0], sg.input_ports[0])
+
+    empty_canvas.run_single()
+    assert not _highlighted(empty_canvas)
+
+
+def test_recombination_highlights_every_contributing_wire(empty_canvas):
+    z2, up, _ = _build_recombination(empty_canvas)
+    z2.coherent_mode = True
+    empty_canvas.run_single()
+
+    assert up.get_count() == 1
+    # gun→z1, z1→x, both x→z2 arms, z2→up; not z2→down
+    assert len(_highlighted(empty_canvas)) == 5
+
+
+def test_highlighted_wire_keeps_its_colour_when_cleared(canvas):
+    wire = canvas._connections[1].wire_item
+    normal = wire.pen().color().name()
+    wire.set_highlighted(True)
+    assert wire.pen().color().name() != normal
+    wire.set_highlighted(False)
+    assert wire.pen().color().name() == normal

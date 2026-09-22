@@ -323,15 +323,56 @@ class ExperimentCanvas(QGraphicsView):
             n: Number of particles to simulate (default: 10,000)
         """
         self.reset_counts()
+        self.highlight_path_to(None)
         self._fire(n)
         self._mode = "Batch"
         self.notify_changed()
 
     def run_single(self):
-        """Fire a single particle and add it to the counter where it is detected."""
-        self._fire(1)
+        """
+        Fire one particle and highlight the beam paths that could have carried it.
+
+        Where beams recombine a particle has no single path, so every wire on a
+        path from the gun to the counter that fired is highlighted.
+        """
+        fired = self._fire(1)
+        terminal = next((t for t, count in fired if count), None)
+        self.highlight_path_to(terminal if terminal is not LOST else None)
         self._mode = "Single"
         self.notify_changed()
+
+    def highlight_path_to(self, counter):
+        """Highlight the wires on any path from the gun to counter (None clears)."""
+        on_path = set()
+        if counter is not None:
+            graph = self._apparatus_graph
+            gun = next((c for c in self._components if isinstance(c, ParticleGun)), None)
+            forward = self._reachable(gun, [(src, dest) for src, _, dest in graph])
+            backward = self._reachable(counter, [(dest, src) for src, _, dest in graph])
+            on_path = {
+                (src, dest) for src, _, dest in graph
+                if src in forward and dest in backward
+            }
+
+        for connection in self._connections:
+            edge = (connection.source_port._parent_item, connection.dest_port._parent_item)
+            connection.wire_item.set_highlighted(edge in on_path)
+
+    @staticmethod
+    def _reachable(start, edges) -> set:
+        """Components reachable from start along edges, including start itself."""
+        if start is None:
+            return set()
+        following = {}
+        for src, dest in edges:
+            following.setdefault(src, []).append(dest)
+        seen, stack = set(), [start]
+        while stack:
+            node = stack.pop()
+            if node not in seen:
+                seen.add(node)
+                stack.extend(following.get(node, []))
+        return seen
 
     def reset_counts(self):
         """Reset all counter displays, shares and the fired total to zero."""
@@ -489,11 +530,17 @@ class ExperimentCanvas(QGraphicsView):
             return {}
         return outcome_probabilities(gun, gun.emit(), self._apparatus_graph)
 
-    def _fire(self, n: int):
-        """Fire n particles and add them to the counters where they are detected."""
+    def _fire(self, n: int) -> list:
+        """
+        Fire n particles and add them to the counters where they are detected.
+
+        Returns:
+            list of (terminal, count) pairs; the terminal is LOST for particles
+            that left through an unconnected output
+        """
         probs = self.outcome_probabilities()
         if not probs:
-            return
+            return []
         terminals = list(probs)
         counts = np.random.multinomial(n, [probs[t] for t in terminals])
         for terminal, count in zip(terminals, counts):
@@ -501,6 +548,7 @@ class ExperimentCanvas(QGraphicsView):
                 terminal.increment(int(count))
         self._particles_fired += n
         self._update_counter_shares()
+        return list(zip(terminals, (int(count) for count in counts)))
 
     def _update_counter_shares(self):
         """Give each counter its share of all counted particles (Req 20)."""

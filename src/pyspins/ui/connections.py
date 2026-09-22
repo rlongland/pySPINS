@@ -46,6 +46,8 @@ class WireItem(QGraphicsPathItem):
     WIRE_COLOR_ZERO = "#757575"   # Grey for 0 eigenvalue (spin-1 only)
     WIRE_WIDTH = 2
     WIRE_SELECT_COLOR = "#f57c00"  # Orange for selected wire
+    WIRE_HIGHLIGHT_COLOR = "#ffd54f"  # Amber for the path a single particle took
+    HIGHLIGHT_WIDTH = 5
     HIT_DETECTION_WIDTH = 10  # Wider hit area (5px on each side)
 
     def __init__(self, source_port, dest_port):
@@ -73,6 +75,8 @@ class WireItem(QGraphicsPathItem):
         # Visual styling
         self._normal_pen = QPen(QColor(wire_color), self.WIRE_WIDTH)
         self._selected_pen = QPen(QColor(self.WIRE_SELECT_COLOR), self.WIRE_WIDTH + 1)
+        self._highlight_pen = QPen(QColor(self.WIRE_HIGHLIGHT_COLOR), self.HIGHLIGHT_WIDTH)
+        self._highlighted = False
         self.setPen(self._normal_pen)
 
         # Make wire selectable for deletion in Phase 3 Task 3.3
@@ -88,13 +92,26 @@ class WireItem(QGraphicsPathItem):
         When selected, changes pen color to highlight the wire.
         """
         if change == QGraphicsPathItem.GraphicsItemChange.ItemSelectedChange:
-            # value is the new selection state (True/False)
-            if value:
-                self.setPen(self._selected_pen)
-            else:
-                self.setPen(self._normal_pen)
+            self._apply_pen(selected=bool(value))
 
         return super().itemChange(change, value)
+
+    def set_highlighted(self, highlighted: bool):
+        """Mark this wire as part of the path a single particle took."""
+        self._highlighted = highlighted
+        self._apply_pen(selected=self.isSelected())
+
+    def is_highlighted(self) -> bool:
+        return self._highlighted
+
+    def _apply_pen(self, selected: bool):
+        """Selection wins over highlighting, which wins over the eigenvalue colour."""
+        if selected:
+            self.setPen(self._selected_pen)
+        elif self._highlighted:
+            self.setPen(self._highlight_pen)
+        else:
+            self.setPen(self._normal_pen)
 
     def shape(self):
         """
