@@ -7,3 +7,5 @@ dist/
 build/
 .pytest_cache/
 *.spins
+venv/
+ralph-logs/
