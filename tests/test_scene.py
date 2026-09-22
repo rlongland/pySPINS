@@ -237,3 +237,34 @@ def test_picker_preselects_current_state(qapp):
     assert StatePickerDialog(1.0, SpinState.ONE_ZERO.copy())._state_combo.currentText() == "0"
     dialog = StatePickerDialog(0.5, UNKNOWN_STATES["B"].copy(), current_unknown="B")
     assert dialog._state_combo.currentText() == "B"
+
+
+def test_counters_show_their_share(canvas):
+    upper, lower = sorted(_counters(canvas), key=lambda c: c.y())
+    canvas.run_batch(500)
+    assert upper.get_share() == pytest.approx(1.0)
+    assert lower.get_share() == pytest.approx(0.0)
+    assert upper.label == "500\n100.0%"
+    assert lower.label == "0"
+
+
+def test_counter_shares_split_on_a_50_50_experiment(empty_canvas):
+    gun = empty_canvas.add_gun(0, 0)
+    sg = empty_canvas.add_analyzer(0.5, 100, 0, axis_label="+x")
+    up = empty_canvas.add_counter(200, -50)
+    down = empty_canvas.add_counter(200, 50)
+    empty_canvas.connect_ports(gun.output_ports[0], sg.input_ports[0])
+    empty_canvas.connect_ports(sg.output_ports[0], up.input_ports[0])
+    empty_canvas.connect_ports(sg.output_ports[1], down.input_ports[0])
+
+    empty_canvas.run_batch(10_000)
+    assert up.get_share() + down.get_share() == pytest.approx(1.0)
+    assert up.get_share() == pytest.approx(0.5, abs=0.05)
+    assert "%" in up.label
+
+
+def test_reset_clears_shares(canvas):
+    canvas.run_batch(100)
+    canvas.reset_counts()
+    assert all(c.get_share() == 0.0 for c in _counters(canvas))
+    assert canvas.particles_fired() == 0

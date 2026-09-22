@@ -1,6 +1,6 @@
 import numpy as np
 from PySide6.QtWidgets import QGraphicsView, QGraphicsScene
-from PySide6.QtCore import Qt, QMarginsF, QPointF, QRectF, QSizeF
+from PySide6.QtCore import Qt, QMarginsF, QPointF, QRectF, QSizeF, Signal
 from PySide6.QtGui import QKeyEvent, QPageSize, QPainter, QImage, QPdfWriter
 
 from pyspins.ui.components.gun import ParticleGun
@@ -15,6 +15,10 @@ from pyspins.physics.states import UNKNOWN_STATES
 
 class ExperimentCanvas(QGraphicsView):
     """Canvas for the Stern-Gerlach apparatus with zoom support."""
+
+    #: Emitted whenever the apparatus or the counts change, so the window
+    #: can refresh the status bar (Req 18).
+    scene_changed = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -46,6 +50,10 @@ class ExperimentCanvas(QGraphicsView):
         self._drawing_wire = False
         self._temp_wire = None
         self._wire_source_port = None
+
+        # Particles fired since the counters were last reset (Req 18)
+        self._particles_fired = 0
+        self._mode = "Ready"
 
         # Component placement position (for toolbar "Add" buttons)
         self._next_component_x = 100
@@ -188,6 +196,7 @@ class ExperimentCanvas(QGraphicsView):
 
         # Update coherent mode checkboxes (topology may have changed)
         self._update_coherent_checkboxes()
+        self.notify_changed()
         return connection
 
     def update_wire_drawing(self, scene_pos):
@@ -289,6 +298,7 @@ class ExperimentCanvas(QGraphicsView):
 
         # Update coherent mode checkboxes (topology may have changed)
         self._update_coherent_checkboxes()
+        self.notify_changed()
 
     def delete_component(self, component):
         """Remove a component and all its connected wires from the canvas."""
@@ -300,6 +310,7 @@ class ExperimentCanvas(QGraphicsView):
         # Remove from component list and scene
         self._components = [c for c in self._components if c is not component]
         self._scene.removeItem(component)
+        self.notify_changed()
 
     def run_batch(self, n: int = 10_000):
         """
@@ -313,16 +324,40 @@ class ExperimentCanvas(QGraphicsView):
         """
         self.reset_counts()
         self._fire(n)
+        self._mode = "Batch"
+        self.notify_changed()
 
     def run_single(self):
         """Fire a single particle and add it to the counter where it is detected."""
         self._fire(1)
+        self._mode = "Single"
+        self.notify_changed()
 
     def reset_counts(self):
-        """Reset all counter displays to zero."""
+        """Reset all counter displays, shares and the fired total to zero."""
         for component in self._components:
             if isinstance(component, ParticleCounter):
                 component.reset()
+        self._particles_fired = 0
+        self._mode = "Ready"
+        self.notify_changed()
+
+    def notify_changed(self):
+        """Announce that the apparatus or the counts changed."""
+        self.scene_changed.emit()
+
+    def spin_type(self) -> float | None:
+        """Spin type of the gun that fires, or None if there is no gun."""
+        gun = next((c for c in self._components if isinstance(c, ParticleGun)), None)
+        return None if gun is None else gun.get_spin_type()
+
+    def particles_fired(self) -> int:
+        """Particles fired since the counters were last reset."""
+        return self._particles_fired
+
+    def mode(self) -> str:
+        """How the last particles were fired: "Batch", "Single" or "Ready"."""
+        return self._mode
 
     def add_gun(self, x: float | None = None, y: float | None = None):
         """
@@ -424,6 +459,7 @@ class ExperimentCanvas(QGraphicsView):
 
         self._scene.addItem(component)
         self._components.append(component)
+        self.notify_changed()
         return component
 
     def _update_coherent_checkboxes(self):
@@ -463,6 +499,15 @@ class ExperimentCanvas(QGraphicsView):
         for terminal, count in zip(terminals, counts):
             if terminal is not LOST and count:
                 terminal.increment(int(count))
+        self._particles_fired += n
+        self._update_counter_shares()
+
+    def _update_counter_shares(self):
+        """Give each counter its share of all counted particles (Req 20)."""
+        counters = [c for c in self._components if isinstance(c, ParticleCounter)]
+        total = sum(counter.get_count() for counter in counters)
+        for counter in counters:
+            counter.set_share(counter.get_count() / total if total else 0.0)
 
     def _build_default_scene(self):
         """Build the default apparatus: Gun → SG_z → Counter(+z) + Counter(−z)."""

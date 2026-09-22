@@ -172,6 +172,7 @@ class ParticleGun(ApparatusItem):
             spin_type, state_vector = dialog.get_state()
             self.set_spin_type(spin_type)
             self.set_initial_state(state_vector, dialog.get_unknown_label())
+            self.notify_canvas()
 
         # Don't propagate to parent
         event.accept()

@@ -88,6 +88,13 @@ class ApparatusItem(QGraphicsRectItem):
         """
         raise NotImplementedError
 
+    def notify_canvas(self):
+        """Tell the canvas this component changed, so the status bar refreshes."""
+        scene = self.scene()
+        for view in scene.views() if scene else []:
+            if hasattr(view, "notify_changed"):
+                view.notify_changed()
+
     def set_label(self, label: str):
         """Update the component's text label."""
         self.label = label

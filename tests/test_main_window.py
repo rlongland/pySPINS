@@ -78,3 +78,25 @@ def test_export_pdf(window, tmp_path):
     target = tmp_path / "apparatus.pdf"
     window._canvas.export_to_pdf(str(target))
     assert target.read_bytes().startswith(b"%PDF")
+
+
+def test_status_bar_reports_spin_fired_and_mode(window):
+    assert window._status.text() == "Spin-1/2  |  Fired: 0  |  Mode: Ready"
+
+    window._actions["run_batch"].trigger()
+    assert window._status.text() == "Spin-1/2  |  Fired: 10,000  |  Mode: Batch"
+
+    window._actions["run_single"].trigger()
+    assert window._status.text() == "Spin-1/2  |  Fired: 10,001  |  Mode: Single"
+
+    window._actions["reset"].trigger()
+    assert window._status.text() == "Spin-1/2  |  Fired: 0  |  Mode: Ready"
+
+
+def test_status_bar_follows_the_gun(window):
+    window._canvas._components[0].set_spin_type(1.0)
+    window._canvas.notify_changed()
+    assert window._status.text().startswith("Spin-1")
+
+    window._canvas.delete_component(window._canvas._components[0])
+    assert window._status.text().startswith("No gun")

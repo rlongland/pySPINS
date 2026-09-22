@@ -30,6 +30,17 @@ class MainWindow(QMainWindow):
 
         self._status = QLabel()
         self.statusBar().addWidget(self._status)
+        self._canvas.scene_changed.connect(self._update_status)
+        self._update_status()
+
+    def _update_status(self):
+        """Show spin type, particles fired and firing mode (Req 18)."""
+        spin = self._canvas.spin_type()
+        spin_text = "No gun" if spin is None else f"Spin-{'1/2' if spin == 0.5 else '1'}"
+        self._status.setText(
+            f"{spin_text}  |  Fired: {self._canvas.particles_fired():,}"
+            f"  |  Mode: {self._canvas.mode()}"
+        )
 
     def _add_action(self, name: str, text: str, handler, icon: str = None,
                     shortcut=None) -> QAction:
@@ -133,7 +144,7 @@ class MainWindow(QMainWindow):
         """Replace the scene with the default apparatus."""
         self._canvas.new_scene()
         self._current_file_path = None
-        self._status.setText("New apparatus")
+        self.statusBar().showMessage("New apparatus", 5000)
 
     def _run(self, batch: bool):
         """Fire particles, in a batch of 10,000 or one at a time."""
@@ -202,7 +213,7 @@ class MainWindow(QMainWindow):
             file_path += f".{suffix}"
         try:
             export(file_path)
-            self._status.setText(f"Exported to {file_path}")
+            self.statusBar().showMessage(f"Exported to {file_path}", 5000)
         except Exception as e:
             QMessageBox.critical(self, "Export Error", f"Failed to export:\n{str(e)}")
 
@@ -223,7 +234,7 @@ class MainWindow(QMainWindow):
                 json.dump(scene_data, f, indent=2)
 
             self._current_file_path = file_path
-            self._status.setText(f"Saved to {file_path}")
+            self.statusBar().showMessage(f"Saved to {file_path}", 5000)
 
         except Exception as e:
             QMessageBox.critical(
@@ -248,7 +259,7 @@ class MainWindow(QMainWindow):
             self._canvas.from_json(scene_data)
 
             self._current_file_path = file_path
-            self._status.setText(f"Loaded from {file_path}")
+            self.statusBar().showMessage(f"Loaded from {file_path}", 5000)
 
         except Exception as e:
             QMessageBox.critical(

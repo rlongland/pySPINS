@@ -1,5 +1,8 @@
 """Counter component - terminal component that counts detected particles."""
 
+from PySide6.QtCore import Qt, QRectF
+from PySide6.QtGui import QBrush, QColor
+
 from .base import ApparatusItem
 
 
@@ -25,6 +28,8 @@ class ParticleCounter(ApparatusItem):
         super().__init__(label=label, color=self.COLOR, x=x, y=y)
 
         self._count = 0
+        # Share of all counted particles, drawn as a fill bar (Req 20)
+        self._share = 0.0
         self._update_label()
 
         # Counter has one input port (left), no output ports
@@ -44,7 +49,23 @@ class ParticleCounter(ApparatusItem):
     def reset(self):
         """Reset the counter to zero."""
         self._count = 0
+        self._share = 0.0
         self._update_label()
+
+    def set_share(self, share: float):
+        """
+        Set this counter's share of all counted particles.
+
+        Args:
+            share: Fraction from 0 to 1, shown as a percentage and a fill bar
+        """
+        self._share = share
+        self._update_label()
+        self.update()
+
+    def get_share(self) -> float:
+        """This counter's share of all counted particles."""
+        return self._share
 
     def get_count(self) -> int:
         """Get the current count."""
@@ -61,8 +82,22 @@ class ParticleCounter(ApparatusItem):
         self._update_label()
 
     def _update_label(self):
-        """Update the displayed label with current count."""
-        # Display count in large digits
-        # Format: just the number for simplicity in Phase 2
-        # Phase 3+ may add more styling
-        self.set_label(str(self._count))
+        """Show the count, with its percentage of the total once anything is counted."""
+        if self._count and self._share:
+            self.set_label(f"{self._count}\n{self._share * 100:.1f}%")
+        else:
+            self.set_label(str(self._count))
+
+    def paint(self, painter, option, widget=None):
+        """Draw the counter, with a progress-bar style fill for its share (Req 20)."""
+        super().paint(painter, option, widget)
+        if self._share <= 0:
+            return
+        height, margin = 6, 4
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QBrush(QColor("#a5d6a7")))
+        painter.drawRoundedRect(
+            QRectF(margin, self.HEIGHT - height - margin,
+                   (self.WIDTH - 2 * margin) * self._share, height),
+            2, 2,
+        )
