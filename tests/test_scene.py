@@ -24,11 +24,6 @@ def empty_canvas(canvas):
     return canvas
 
 
-def _fire_plus_z(canvas):
-    """Point the default gun along +z, for a deterministic 100/0 experiment."""
-    canvas._components[0].set_initial_state(SpinState.HALF_PLUS_Z.copy())
-
-
 def _wires(canvas):
     return [item for item in canvas.scene().items() if isinstance(item, WireItem)]
 
@@ -53,7 +48,6 @@ def test_default_scene_ports_are_occupied(canvas):
 
 
 def test_default_scene_wire_can_be_deleted(canvas):
-    _fire_plus_z(canvas)
     upper = canvas._connections[1]
     canvas.delete_wire(upper.wire_item)
     assert len(canvas._connections) == 2
@@ -69,16 +63,7 @@ def test_default_scene_saves_connections(canvas):
 
 
 def test_default_scene_batch(canvas):
-    """The default gun fires |+x>, so SGz splits it evenly."""
-    canvas.run_batch(1000)
-    upper, lower = sorted(_counters(canvas), key=lambda c: c.y())
-    assert upper.get_count() + lower.get_count() == 1000
-    assert upper.get_count() == pytest.approx(500, abs=80)
-
-
-def test_default_scene_batch_with_a_plus_z_gun(canvas):
-    """Experiment 1: |+z> measured along z lands entirely in the upper counter."""
-    _fire_plus_z(canvas)
+    """Experiment 1: the default scene fires |+z>, which SGz sends upward."""
     canvas.run_batch(1000)
     upper, lower = sorted(_counters(canvas), key=lambda c: c.y())
     assert upper.get_count() == 1000
@@ -257,7 +242,6 @@ def test_picker_preselects_current_state(qapp):
 
 
 def test_counters_show_their_share(canvas):
-    _fire_plus_z(canvas)
     upper, lower = sorted(_counters(canvas), key=lambda c: c.y())
     canvas.run_batch(500)
     assert upper.get_share() == pytest.approx(1.0)
@@ -295,7 +279,6 @@ def _highlighted(canvas):
 
 def test_single_shot_highlights_the_path_taken(canvas):
     gun, sg, upper, lower = canvas._components
-    _fire_plus_z(canvas)
     canvas.run_single()
 
     # |+z> on SGz always lands in the upper counter, never the lower one
@@ -339,3 +322,9 @@ def test_highlighted_wire_keeps_its_colour_when_cleared(canvas):
     assert wire.pen().color().name() != normal
     wire.set_highlighted(False)
     assert wire.pen().color().name() == normal
+
+
+def test_default_gun_states(canvas):
+    """The default scene opens on Experiment 1; new guns start in |+x>."""
+    assert canvas._components[0].emit().vector == pytest.approx(SpinState.HALF_PLUS_Z)
+    assert canvas.add_gun().emit().vector == pytest.approx(SpinState.HALF_PLUS_X)

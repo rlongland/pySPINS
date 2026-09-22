@@ -10,7 +10,7 @@ from pyspins.ui.components.magnet import SpinRotationMagnet
 from pyspins.ui.port import InputPort, OutputPort
 from pyspins.ui.connections import Connection, WireItem
 from pyspins.physics.network import LOST, outcome_probabilities
-from pyspins.physics.states import UNKNOWN_STATES
+from pyspins.physics.states import UNKNOWN_STATES, SpinState
 
 
 class ExperimentCanvas(QGraphicsView):
@@ -558,8 +558,14 @@ class ExperimentCanvas(QGraphicsView):
             counter.set_share(counter.get_count() / total if total else 0.0)
 
     def _build_default_scene(self):
-        """Build the default apparatus: Gun → SG_z → Counter(+z) + Counter(−z)."""
+        """Build the default apparatus: Gun → SG_z → Counter(+z) + Counter(−z).
+
+        The gun fires |+z⟩ so the scene opens on Experiment 1 (Req 21): measuring
+        Sz on a beam prepared in |+z⟩ gives 100% in the upper counter. Guns added
+        from the toolbar start in |+x⟩ instead.
+        """
         gun = self.add_gun(50, 150)
+        gun.set_initial_state(SpinState.HALF_PLUS_Z.copy())
         sg_z = self.add_analyzer(0.5, 200, 150, axis_label="+z")
         counter_upper = self.add_counter(350, 100, label="Counter(+z)")
         counter_lower = self.add_counter(350, 200, label="Counter(-z)")
