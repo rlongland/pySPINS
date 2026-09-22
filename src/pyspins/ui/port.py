@@ -31,7 +31,9 @@ class Port(QGraphicsEllipseItem):
 
         self.eigenvalue = eigenvalue
         self._parent_item = parent_item
-        self.connection = None  # Connection object when port is connected
+        # Connection objects attached to this port. An output port carries at most
+        # one; an input port may receive several beams (recombination).
+        self.connections = []
 
         # Visual styling (will be overridden by subclasses)
         self.setPen(QPen(QColor(self.PORT_COLOR), 2))

@@ -1,3 +1,4 @@
+import numpy as np
 from PySide6.QtWidgets import QGraphicsView, QGraphicsScene
 from PySide6.QtCore import Qt, QPointF, QRectF
 from PySide6.QtGui import QKeyEvent, QPainter, QImage
@@ -8,8 +9,7 @@ from pyspins.ui.components.counter import ParticleCounter
 from pyspins.ui.components.magnet import SpinRotationMagnet
 from pyspins.ui.port import InputPort, OutputPort
 from pyspins.ui.connections import Connection, WireItem
-from pyspins.physics.measurement import measure
-from pyspins.physics.operators import eigenstates
+from pyspins.physics.network import LOST, outcome_probabilities
 
 
 class ExperimentCanvas(QGraphicsView):
@@ -34,9 +34,6 @@ class ExperimentCanvas(QGraphicsView):
         self._zoom_factor = 1.0
         self._zoom_min = 0.1
         self._zoom_max = 5.0
-
-        # Apparatus graph: list of (source_item, output_index, dest_item) tuples
-        self._apparatus_graph = []
 
         # Component storage
         self._components = []
@@ -139,15 +136,14 @@ class ExperimentCanvas(QGraphicsView):
             source_port: OutputPort where wire drawing started
         """
         # Don't allow multiple connections from the same output port
-        if source_port.connection is not None:
+        if source_port.connections:
             return
 
         self._drawing_wire = True
         self._wire_source_port = source_port
 
-        # Create temporary wire (will be finalized or removed on mouse release)
+        # Create temporary wire (removed again on mouse release)
         self._temp_wire = WireItem(source_port, None)
-        self._temp_wire.dest_port = None  # No destination yet
         self._scene.addItem(self._temp_wire)
 
         # Set initial position to source port
@@ -157,8 +153,8 @@ class ExperimentCanvas(QGraphicsView):
         """
         Complete wire drawing by connecting to an input port.
 
-        Creates a permanent connection if the ports are compatible
-        (source is OutputPort, dest is InputPort, neither already connected).
+        The temporary wire is discarded and, if the connection is valid,
+        replaced by a permanent one.
 
         Args:
             dest_port: InputPort where wire drawing ended
@@ -166,37 +162,32 @@ class ExperimentCanvas(QGraphicsView):
         if not self._drawing_wire or not self._temp_wire:
             return
 
-        # Validate connection
-        if not self._is_valid_connection(self._wire_source_port, dest_port):
-            self.cancel_wire_drawing()
-            return
+        source_port = self._wire_source_port
+        self.cancel_wire_drawing()
+        self.connect_ports(source_port, dest_port)
 
-        # Finalize the wire by setting its destination port
-        self._temp_wire.dest_port = dest_port
-        self._temp_wire.update_path()
+    def connect_ports(self, source_port, dest_port):
+        """
+        Connect an output port to an input port with a wire.
 
-        # Create connection object
-        connection = Connection(self._wire_source_port, dest_port, self._temp_wire)
+        Args:
+            source_port: OutputPort where the connection starts
+            dest_port: InputPort where the connection ends
+
+        Returns:
+            Connection, or None if the connection is not valid
+        """
+        if not self._is_valid_connection(source_port, dest_port):
+            return None
+
+        wire = WireItem(source_port, dest_port)
+        self._scene.addItem(wire)
+        connection = Connection(source_port, dest_port, wire)
         self._connections.append(connection)
-
-        # Update apparatus graph
-        # Find the components that own these ports
-        source_component = self._wire_source_port._parent_item
-        dest_component = dest_port._parent_item
-
-        # Find the output index of the source port
-        output_index = source_component.output_ports.index(self._wire_source_port)
-
-        # Add to apparatus graph
-        self._apparatus_graph.append((source_component, output_index, dest_component))
 
         # Update coherent mode checkboxes (topology may have changed)
         self._update_coherent_checkboxes()
-
-        # Clear wire drawing state
-        self._drawing_wire = False
-        self._temp_wire = None
-        self._wire_source_port = None
+        return connection
 
     def update_wire_drawing(self, scene_pos):
         """Update the temporary wire endpoint to follow the mouse."""
@@ -221,10 +212,10 @@ class ExperimentCanvas(QGraphicsView):
         Check if a connection between two ports is valid.
 
         Valid connections require:
-        - Source is an OutputPort
-        - Destination is an InputPort
-        - Neither port is already connected
+        - Source is an OutputPort that is not already connected
+        - Destination is an InputPort (it may already receive other beams)
         - Ports belong to different components
+        - The connection does not close a loop
 
         Args:
             source_port: Port where connection starts
@@ -233,68 +224,66 @@ class ExperimentCanvas(QGraphicsView):
         Returns:
             bool: True if connection is valid
         """
-        # Check types
         if not isinstance(source_port, OutputPort):
             return False
         if not isinstance(dest_port, InputPort):
             return False
 
-        # Check if ports are already connected
-        if source_port.connection is not None:
-            return False
-        if dest_port.connection is not None:
+        if source_port.connections:
             return False
 
-        # Check that ports belong to different components
-        if source_port._parent_item == dest_port._parent_item:
+        source_component = source_port._parent_item
+        dest_component = dest_port._parent_item
+        if source_component is dest_component:
             return False
+
+        # Reject if the source is already reachable from the destination
+        downstream = {}
+        for src, _, dest in self._apparatus_graph:
+            downstream.setdefault(src, []).append(dest)
+        stack, seen = [dest_component], set()
+        while stack:
+            component = stack.pop()
+            if component is source_component:
+                return False
+            if component not in seen:
+                seen.add(component)
+                stack.extend(downstream.get(component, []))
 
         return True
+
+    @property
+    def _apparatus_graph(self):
+        """Connections as (source_component, output_index, dest_component) tuples."""
+        graph = []
+        for connection in self._connections:
+            source = connection.source_port._parent_item
+            graph.append((
+                source,
+                source.output_ports.index(connection.source_port),
+                connection.dest_port._parent_item,
+            ))
+        return graph
 
     def delete_wire(self, wire_item: WireItem):
         """
         Delete a wire connection.
 
-        Removes the wire from the scene, clears port connections,
-        removes from the connections list, and updates the apparatus graph.
+        Removes the wire from the scene, detaches it from its ports and
+        removes it from the connections list.
 
         Args:
             wire_item: The WireItem to delete
         """
-        # Find the connection object for this wire
-        connection = None
-        for conn in self._connections:
-            if conn.wire_item == wire_item:
-                connection = conn
-                break
+        connection = next(
+            (conn for conn in self._connections if conn.wire_item is wire_item), None
+        )
 
-        if connection is None:
-            # Wire not found in connections list, shouldn't happen
-            # but handle gracefully by just removing from scene
-            self._scene.removeItem(wire_item)
-            return
+        if connection is not None:
+            connection.source_port.connections.remove(connection)
+            connection.dest_port.connections.remove(connection)
+            self._connections.remove(connection)
 
-        # Clear port connection references
-        connection.source_port.connection = None
-        connection.dest_port.connection = None
-
-        # Remove from apparatus graph
-        # Find the graph entry for this connection
-        source_component = connection.source_port._parent_item
-        dest_component = connection.dest_port._parent_item
-        output_index = source_component.output_ports.index(connection.source_port)
-
-        # Remove matching entry from apparatus graph
-        self._apparatus_graph = [
-            (src, idx, dest)
-            for src, idx, dest in self._apparatus_graph
-            if not (src == source_component and idx == output_index and dest == dest_component)
-        ]
-
-        # Remove from connections list
-        self._connections.remove(connection)
-
-        # Remove wire from scene
         self._scene.removeItem(wire_item)
 
         # Update coherent mode checkboxes (topology may have changed)
@@ -302,54 +291,31 @@ class ExperimentCanvas(QGraphicsView):
 
     def delete_component(self, component):
         """Remove a component and all its connected wires from the canvas."""
-        # Collect wires attached to any of this component's ports
         all_ports = component.input_ports + component.output_ports
-        wires_to_delete = []
         for conn in list(self._connections):
             if conn.source_port in all_ports or conn.dest_port in all_ports:
-                wires_to_delete.append(conn.wire_item)
-        for wire in wires_to_delete:
-            self.delete_wire(wire)
-
-        # Remove from apparatus graph
-        self._apparatus_graph = [
-            (src, idx, dest)
-            for src, idx, dest in self._apparatus_graph
-            if src is not component and dest is not component
-        ]
+                self.delete_wire(conn.wire_item)
 
         # Remove from component list and scene
         self._components = [c for c in self._components if c is not component]
         self._scene.removeItem(component)
 
-        # Update coherent mode checkboxes (topology may have changed)
-        self._update_coherent_checkboxes()
-
     def run_batch(self, n: int = 10_000):
         """
         Run batch simulation of n particles through the apparatus.
 
-        Walks the apparatus graph for each particle, performing measurements
-        and accumulating counts in terminal counters.
+        Counters are reset first, then each particle's final destination is
+        drawn from the exact outcome probabilities.
 
         Args:
             n: Number of particles to simulate (default: 10,000)
         """
-        # Reset all counters before batch run
         self.reset_counts()
-
-        # Simulate n particles
-        for _ in range(n):
-            self._simulate_single_particle()
+        self._fire(n)
 
     def run_single(self):
-        """
-        Run single particle simulation through the apparatus.
-
-        Simulates one particle's path through the apparatus, following
-        the measurement outcomes to determine which path is taken.
-        """
-        self._simulate_single_particle()
+        """Fire a single particle and add it to the counter where it is detected."""
+        self._fire(1)
 
     def reset_counts(self):
         """Reset all counter displays to zero."""
@@ -357,37 +323,35 @@ class ExperimentCanvas(QGraphicsView):
             if isinstance(component, ParticleCounter):
                 component.reset()
 
-    def add_gun(self):
-        """Add a new particle gun to the canvas."""
-        # Create gun at next available position
-        gun = ParticleGun(self._next_component_x, self._next_component_y)
+    def add_gun(self, x: float | None = None, y: float | None = None):
+        """
+        Add a new particle gun to the canvas.
 
-        # Create ports
+        Args:
+            x, y: Scene position; omitted places it at the next free slot
+        """
+        gun = ParticleGun()
+
         gun_out = OutputPort(gun, eigenvalue=0.5)
         gun_out.position_on_right_edge(vertical_offset=0)
         gun.output_ports = [gun_out]
 
-        # Add to scene and component list
-        self._scene.addItem(gun)
-        self._components.append(gun)
+        return self._place(gun, x, y)
 
-        # Update position for next component
-        self._next_component_x += 150
-        if self._next_component_x > 500:
-            self._next_component_x = 100
-            self._next_component_y += 100
-
-    def add_analyzer(self, spin_type: float = 0.5):
+    def add_analyzer(self, spin_type: float = 0.5, x: float | None = None,
+                     y: float | None = None, axis_label: str = "+z",
+                     phi_deg: float = 0.0):
         """
         Add a new Stern-Gerlach analyzer to the canvas.
 
         Args:
             spin_type: Spin type for the analyzer (0.5 or 1.0, default 0.5)
+            x, y: Scene position; omitted places it at the next free slot
+            axis_label: Measurement axis label (default "+z")
+            phi_deg: Angle in the x-y plane for a custom axis
         """
-        # Create analyzer at next available position
         analyzer = SternGerlachAnalyzer(
-            self._next_component_x, self._next_component_y,
-            axis_label="+z", spin_type=spin_type
+            axis_label=axis_label, phi_deg=phi_deg, spin_type=spin_type
         )
 
         # Create ports: 1 input, multiple outputs based on spin type (Req 26)
@@ -395,38 +359,28 @@ class ExperimentCanvas(QGraphicsView):
         analyzer_in.position_on_left_edge(vertical_offset=0)
         analyzer.input_ports = [analyzer_in]
 
-        # Create output ports based on spin type (Req 26)
         if spin_type == 0.5:
             # Spin-1/2: 2 ports labeled "+" and "−"
-            analyzer_out_upper = OutputPort(analyzer, eigenvalue=0.5)
-            analyzer_out_lower = OutputPort(analyzer, eigenvalue=-0.5)
-            analyzer_out_upper.position_on_right_edge(vertical_offset=-15)
-            analyzer_out_lower.position_on_right_edge(vertical_offset=15)
-            analyzer.output_ports = [analyzer_out_upper, analyzer_out_lower]
-        else:  # spin_type == 1.0
+            eigenvalues, offsets = [0.5, -0.5], [-15, 15]
+        else:
             # Spin-1: 3 ports labeled "+1", "0", "−1"
-            analyzer_out_plus = OutputPort(analyzer, eigenvalue=1.0)
-            analyzer_out_zero = OutputPort(analyzer, eigenvalue=0.0)
-            analyzer_out_minus = OutputPort(analyzer, eigenvalue=-1.0)
-            analyzer_out_plus.position_on_right_edge(vertical_offset=-20)
-            analyzer_out_zero.position_on_right_edge(vertical_offset=0)
-            analyzer_out_minus.position_on_right_edge(vertical_offset=20)
-            analyzer.output_ports = [analyzer_out_plus, analyzer_out_zero, analyzer_out_minus]
+            eigenvalues, offsets = [1.0, 0.0, -1.0], [-20, 0, 20]
+        analyzer.output_ports = []
+        for eigenvalue, offset in zip(eigenvalues, offsets):
+            port = OutputPort(analyzer, eigenvalue=eigenvalue)
+            port.position_on_right_edge(vertical_offset=offset)
+            analyzer.output_ports.append(port)
 
-        # Add to scene and component list
-        self._scene.addItem(analyzer)
-        self._components.append(analyzer)
+        return self._place(analyzer, x, y)
 
-        # Update position for next component
-        self._next_component_x += 150
-        if self._next_component_x > 500:
-            self._next_component_x = 100
-            self._next_component_y += 100
+    def add_magnet(self, x: float | None = None, y: float | None = None):
+        """
+        Add a new spin rotation magnet to the canvas.
 
-    def add_magnet(self):
-        """Add a new spin rotation magnet to the canvas."""
-        # Create magnet at next available position
-        magnet = SpinRotationMagnet(self._next_component_x, self._next_component_y)
+        Args:
+            x, y: Scene position; omitted places it at the next free slot
+        """
+        magnet = SpinRotationMagnet()
 
         # Create ports: 1 input, 1 output (no beam splitting)
         magnet_in = InputPort(magnet)
@@ -437,314 +391,88 @@ class ExperimentCanvas(QGraphicsView):
         magnet_out.position_on_right_edge(vertical_offset=0)
         magnet.output_ports = [magnet_out]
 
-        # Add to scene and component list
-        self._scene.addItem(magnet)
-        self._components.append(magnet)
+        return self._place(magnet, x, y)
 
-        # Update position for next component
-        self._next_component_x += 150
-        if self._next_component_x > 500:
-            self._next_component_x = 100
-            self._next_component_y += 100
+    def add_counter(self, x: float | None = None, y: float | None = None,
+                    label: str = "Counter"):
+        """
+        Add a new particle counter to the canvas.
 
-    def add_counter(self):
-        """Add a new particle counter to the canvas."""
-        # Create counter at next available position
-        counter = ParticleCounter(self._next_component_x, self._next_component_y)
+        Args:
+            x, y: Scene position; omitted places it at the next free slot
+            label: Counter label
+        """
+        counter = ParticleCounter(label=label)
 
         # Create ports: 1 input (terminal component)
         counter_in = InputPort(counter)
         counter_in.position_on_left_edge(vertical_offset=0)
         counter.input_ports = [counter_in]
 
-        # Add to scene and component list
-        self._scene.addItem(counter)
-        self._components.append(counter)
+        return self._place(counter, x, y)
 
-        # Update position for next component
-        self._next_component_x += 150
-        if self._next_component_x > 500:
-            self._next_component_x = 100
-            self._next_component_y += 100
+    def _place(self, component, x, y):
+        """Position a new component, add it to the scene and return it."""
+        if x is None or y is None:
+            x, y = self._next_component_x, self._next_component_y
+            self._next_component_x += 150
+            if self._next_component_x > 500:
+                self._next_component_x = 100
+                self._next_component_y += 100
+        component.setPos(x, y)
+
+        self._scene.addItem(component)
+        self._components.append(component)
+        return component
 
     def _update_coherent_checkboxes(self):
         """
         Update the visibility of coherent mode checkboxes on all analyzers.
 
-        Checkboxes are shown only on analyzers that have multiple incoming
-        connections from the same upstream analyzer (recombination points).
+        Checkboxes are shown only on analyzers whose input receives more than
+        one beam (recombination points).
         """
+        incoming = {}
+        for _, _, dest in self._apparatus_graph:
+            incoming[dest] = incoming.get(dest, 0) + 1
         for component in self._components:
             if isinstance(component, SternGerlachAnalyzer):
-                upstream_analyzer = self._all_inputs_from_same_analyzer(component)
-                should_show = upstream_analyzer is not None
-                component.update_coherent_checkbox_visibility(should_show)
+                component.update_coherent_checkbox_visibility(incoming.get(component, 0) > 1)
 
-    def _all_inputs_from_same_analyzer(self, component):
+    def outcome_probabilities(self) -> dict:
         """
-        Check if all incoming connections to this component come from outputs
-        of the same upstream analyzer.
-
-        This detects the coherent recombination topology where multiple output
-        ports of one analyzer all connect to inputs of this component.
-
-        Args:
-            component: Component to check (typically an analyzer)
+        Exact probability of a particle ending at each counter.
 
         Returns:
-            SternGerlachAnalyzer or None: The upstream analyzer if recombination
-                                          is detected, None otherwise
+            dict: {ParticleCounter or LOST: probability}; LOST collects particles
+                  leaving through unconnected outputs. Empty if there is no gun.
         """
-        if not isinstance(component, SternGerlachAnalyzer):
-            return None
-
-        # Find all incoming connections to this component
-        incoming = [
-            (src, output_idx, dest)
-            for src, output_idx, dest in self._apparatus_graph
-            if dest == component
-        ]
-
-        if len(incoming) < 2:
-            # Need at least 2 paths for recombination
-            return None
-
-        # Check if all sources are the same component and it's an analyzer
-        sources = [src for src, _, _ in incoming]
-        first_source = sources[0]
-
-        if not isinstance(first_source, SternGerlachAnalyzer):
-            return None
-
-        if all(src == first_source for src in sources):
-            return first_source  # All paths come from the same analyzer
-
-        return None
-
-    def _get_coherent_recombination_target(self, analyzer):
-        """
-        Check if this analyzer's outputs recombine at a downstream analyzer
-        that has coherent mode enabled.
-
-        Args:
-            analyzer: SternGerlachAnalyzer to check
-
-        Returns:
-            SternGerlachAnalyzer or None: The downstream recombination analyzer
-                                          if coherent recombination is active
-        """
-        if not isinstance(analyzer, SternGerlachAnalyzer):
-            return None
-
-        # Find all outgoing connections from this analyzer
-        outgoing = [
-            (src, output_idx, dest)
-            for src, output_idx, dest in self._apparatus_graph
-            if src == analyzer
-        ]
-
-        if len(outgoing) < 2:
-            # Need at least 2 outputs for recombination
-            return None
-
-        # Check if all outputs go to the same component
-        destinations = [dest for _, _, dest in outgoing]
-        first_dest = destinations[0]
-
-        if not isinstance(first_dest, SternGerlachAnalyzer):
-            return None
-
-        if all(dest == first_dest for dest in destinations):
-            # All outputs go to the same analyzer
-            if first_dest.coherent_mode:
-                return first_dest
-
-        return None
-
-    def _simulate_single_particle(self):
-        """
-        Simulate a single particle's journey through the apparatus graph.
-
-        Algorithm:
-        1. Start at the gun, get initial state
-        2. Follow graph connections based on measurement outcomes
-        3. Handle coherent recombination (no collapse at intermediate analyzer)
-        4. Increment counter when terminal component is reached
-        """
-        # Find the gun (source of particles)
-        gun = None
-        for component in self._components:
-            if isinstance(component, ParticleGun):
-                gun = component
-                break
-
+        gun = next((c for c in self._components if isinstance(c, ParticleGun)), None)
         if gun is None:
-            return  # No gun in apparatus
+            return {}
+        return outcome_probabilities(gun, gun.emit(), self._apparatus_graph)
 
-        # Get initial state from gun
-        current_state = gun.simulate()
-        current_component = gun
-
-        # Walk the graph until we reach a terminal component
-        while current_state is not None:
-            # Find connections from current component
-            outgoing_connections = [
-                (src, output_idx, dest)
-                for src, output_idx, dest in self._apparatus_graph
-                if src == current_component
-            ]
-
-            if not outgoing_connections:
-                break  # Terminal component or dead end
-
-            # Determine next component based on current component type
-            if isinstance(current_component, ParticleGun):
-                # Gun has single output (index 0)
-                _, _, next_component = outgoing_connections[0]
-                current_component = next_component
-
-                # Process the next component
-                if isinstance(current_component, ParticleCounter):
-                    current_component.increment()
-                    break  # Terminal
-                else:
-                    current_state = current_component.simulate(current_state)
-
-            elif isinstance(current_component, SternGerlachAnalyzer):
-                # Check if this analyzer's outputs recombine coherently downstream
-                recombination_target = self._get_coherent_recombination_target(current_component)
-
-                if recombination_target:
-                    # Coherent recombination: Don't measure here, pass state through unchanged
-                    # Take the first available connection (all lead to same recombination point)
-                    _, _, next_component = outgoing_connections[0]
-                    current_component = next_component
-
-                    # Process the next component (should be the recombination analyzer)
-                    if isinstance(current_component, ParticleCounter):
-                        current_component.increment()
-                        break  # Terminal
-                    else:
-                        # State passes through unchanged - measurement happens at recombination point
-                        current_state = current_component.simulate(current_state)
-                else:
-                    # Incoherent (normal) mode: Perform measurement to determine path
-                    eigenvalue, post_state = measure(current_state, current_component.get_axis_vector())
-                    current_state = post_state
-
-                    # Determine which output index corresponds to this eigenvalue
-                    # Eigenvalues are ordered descending: for spin-1/2: [+0.5, -0.5]
-                    evals, _ = eigenstates(current_state.s, current_component.get_axis_vector())
-
-                    # Find the index of this eigenvalue
-                    # evals is a list of floats, find the closest match (handle floating point)
-                    output_idx = None
-                    for i, ev in enumerate(evals):
-                        if abs(ev - eigenvalue) < 1e-10:
-                            output_idx = i
-                            break
-
-                    if output_idx is None:
-                        break  # Shouldn't happen, but safety check
-
-                    # Find the connection with this output index
-                    next_component = None
-                    for src, idx, dest in outgoing_connections:
-                        if idx == output_idx:
-                            next_component = dest
-                            break
-
-                    if next_component is None:
-                        break  # No connection for this output
-
-                    current_component = next_component
-
-                    # Process the next component
-                    if isinstance(current_component, ParticleCounter):
-                        current_component.increment()
-                        break  # Terminal
-                    else:
-                        current_state = current_component.simulate(current_state)
-
-            elif isinstance(current_component, SpinRotationMagnet):
-                # Magnet has single output (index 0), no measurement
-                _, _, next_component = outgoing_connections[0]
-                current_component = next_component
-
-                # Process the next component
-                if isinstance(current_component, ParticleCounter):
-                    current_component.increment()
-                    break  # Terminal
-                else:
-                    current_state = current_component.simulate(current_state)
-
-            else:
-                # Unknown component type
-                break
+    def _fire(self, n: int):
+        """Fire n particles and add them to the counters where they are detected."""
+        probs = self.outcome_probabilities()
+        if not probs:
+            return
+        terminals = list(probs)
+        counts = np.random.multinomial(n, [probs[t] for t in terminals])
+        for terminal, count in zip(terminals, counts):
+            if terminal is not LOST and count:
+                terminal.increment(int(count))
 
     def _build_default_scene(self):
-        """
-        Build hardcoded default apparatus: Gun → SG_z → Counter(+z) + Counter(−z).
+        """Build the default apparatus: Gun → SG_z → Counter(+z) + Counter(−z)."""
+        gun = self.add_gun(50, 150)
+        sg_z = self.add_analyzer(0.5, 200, 150, axis_label="+z")
+        counter_upper = self.add_counter(350, 100, label="Counter(+z)")
+        counter_lower = self.add_counter(350, 200, label="Counter(-z)")
 
-        This is a scaffold for Phase 2. Phase 3 will replace this with interactive
-        drag-and-connect functionality.
-        """
-        # Component positions (horizontal layout with spacing)
-        gun_x, gun_y = 50, 150
-        sg_x, sg_y = 200, 150
-        counter_upper_x, counter_upper_y = 350, 100  # +z (upper beam)
-        counter_lower_x, counter_lower_y = 350, 200  # -z (lower beam)
-
-        # Create components
-        gun = ParticleGun(gun_x, gun_y)
-        sg_z = SternGerlachAnalyzer(sg_x, sg_y, axis_label="+z", spin_type=0.5)  # Spin-1/2 analyzer
-        counter_upper = ParticleCounter(counter_upper_x, counter_upper_y, label="Counter(+z)")
-        counter_lower = ParticleCounter(counter_lower_x, counter_lower_y, label="Counter(-z)")
-
-        # Store components
-        self._components = [gun, sg_z, counter_upper, counter_lower]
-
-        # Create ports
-        # Gun: 1 output port (right side, centered)
-        gun_out = OutputPort(gun, eigenvalue=0.5)
-        gun_out.position_on_right_edge(vertical_offset=0)
-        gun.output_ports = [gun_out]
-
-        # SG_z: 1 input port (left side), 2 output ports (right side, upper/lower)
-        sg_in = InputPort(sg_z)
-        sg_in.position_on_left_edge(vertical_offset=0)
-        sg_z.input_ports = [sg_in]
-
-        # For spin-1/2, output ports represent +1/2 (upper) and -1/2 (lower)
-        sg_out_upper = OutputPort(sg_z, eigenvalue=0.5)   # +1/2
-        sg_out_lower = OutputPort(sg_z, eigenvalue=-0.5)  # -1/2
-        sg_out_upper.position_on_right_edge(vertical_offset=-15)  # Offset upward
-        sg_out_lower.position_on_right_edge(vertical_offset=15)   # Offset downward
-        sg_z.output_ports = [sg_out_upper, sg_out_lower]
-
-        # Counter(+z): 1 input port (left side)
-        counter_upper_in = InputPort(counter_upper)
-        counter_upper_in.position_on_left_edge(vertical_offset=0)
-        counter_upper.input_ports = [counter_upper_in]
-
-        # Counter(-z): 1 input port (left side)
-        counter_lower_in = InputPort(counter_lower)
-        counter_lower_in.position_on_left_edge(vertical_offset=0)
-        counter_lower.input_ports = [counter_lower_in]
-
-        # Build apparatus graph: (source_item, output_index, dest_item)
-        # Gun → SG_z (gun's output 0 → sg_z)
-        # SG_z → Counter(+z) (sg_z's output 0 [upper] → counter_upper)
-        # SG_z → Counter(-z) (sg_z's output 1 [lower] → counter_lower)
-        self._apparatus_graph = [
-            (gun, 0, sg_z),
-            (sg_z, 0, counter_upper),   # output_index 0 = upper beam (+z)
-            (sg_z, 1, counter_lower),   # output_index 1 = lower beam (-z)
-        ]
-
-        # Add components to scene
-        for component in self._components:
-            self._scene.addItem(component)
+        self.connect_ports(gun.output_ports[0], sg_z.input_ports[0])
+        self.connect_ports(sg_z.output_ports[0], counter_upper.input_ports[0])  # +z
+        self.connect_ports(sg_z.output_ports[1], counter_lower.input_ports[0])  # -z
 
     def to_json(self) -> dict:
         """
@@ -776,7 +504,10 @@ class ExperimentCanvas(QGraphicsView):
             if isinstance(component, ParticleGun):
                 comp_data["type"] = "gun"
                 comp_data["spin_type"] = component.get_spin_type()
-                comp_data["state_vector"] = component.get_initial_state_vector().tolist()
+                # JSON has no complex type: store each amplitude as [re, im]
+                comp_data["state_vector"] = [
+                    [amp.real, amp.imag] for amp in component.get_initial_state_vector()
+                ]
 
             elif isinstance(component, SternGerlachAnalyzer):
                 comp_data["type"] = "analyzer"
@@ -826,9 +557,10 @@ class ExperimentCanvas(QGraphicsView):
 
         Args:
             data: Dictionary from to_json() (after json.loads)
-        """
-        import numpy as np
 
+        Raises:
+            ValueError: If the data is not a valid scene
+        """
         # Validate version
         if data.get("version") != 1:
             raise ValueError(f"Unsupported file version: {data.get('version')}")
@@ -839,123 +571,50 @@ class ExperimentCanvas(QGraphicsView):
         # Map from serialized ID to recreated component
         id_to_component = {}
 
-        # Recreate components
         for comp_data in data["components"]:
-            comp_id = comp_data["id"]
             comp_type = comp_data["type"]
             x = comp_data["x"]
             y = comp_data["y"]
 
             if comp_type == "gun":
-                component = ParticleGun(x, y)
-                spin_type = comp_data["spin_type"]
-                state_vector = np.array(comp_data["state_vector"], dtype=complex)
-                component.set_spin_type(spin_type)
-                component.set_initial_state(state_vector)
-
-                # Create ports
-                gun_out = OutputPort(component, eigenvalue=0.5)
-                gun_out.position_on_right_edge(vertical_offset=0)
-                component.output_ports = [gun_out]
+                component = self.add_gun(x, y)
+                component.set_spin_type(comp_data["spin_type"])
+                component.set_initial_state(np.array(
+                    [complex(*amp) for amp in comp_data["state_vector"]], dtype=complex
+                ))
 
             elif comp_type == "analyzer":
-                axis_label = comp_data["axis_label"]
-                phi_deg = comp_data["phi_deg"]
-                spin_type = comp_data["spin_type"]
-                component = SternGerlachAnalyzer(x, y, axis_label, phi_deg, spin_type)
+                component = self.add_analyzer(
+                    comp_data["spin_type"], x, y,
+                    axis_label=comp_data["axis_label"], phi_deg=comp_data["phi_deg"],
+                )
                 component.coherent_mode = comp_data.get("coherent_mode", False)
 
-                # Create ports: 1 input, multiple outputs based on spin type
-                analyzer_in = InputPort(component)
-                analyzer_in.position_on_left_edge(vertical_offset=0)
-                component.input_ports = [analyzer_in]
-
-                if spin_type == 0.5:
-                    analyzer_out_upper = OutputPort(component, eigenvalue=0.5)
-                    analyzer_out_lower = OutputPort(component, eigenvalue=-0.5)
-                    analyzer_out_upper.position_on_right_edge(vertical_offset=-15)
-                    analyzer_out_lower.position_on_right_edge(vertical_offset=15)
-                    component.output_ports = [analyzer_out_upper, analyzer_out_lower]
-                else:  # spin_type == 1.0
-                    analyzer_out_plus = OutputPort(component, eigenvalue=1.0)
-                    analyzer_out_zero = OutputPort(component, eigenvalue=0.0)
-                    analyzer_out_minus = OutputPort(component, eigenvalue=-1.0)
-                    analyzer_out_plus.position_on_right_edge(vertical_offset=-20)
-                    analyzer_out_zero.position_on_right_edge(vertical_offset=0)
-                    analyzer_out_minus.position_on_right_edge(vertical_offset=20)
-                    component.output_ports = [analyzer_out_plus, analyzer_out_zero, analyzer_out_minus]
-
             elif comp_type == "magnet":
-                component = SpinRotationMagnet(x, y)
+                component = self.add_magnet(x, y)
                 component.set_beta(comp_data["beta"])
 
-                # Create ports
-                magnet_in = InputPort(component)
-                magnet_in.position_on_left_edge(vertical_offset=0)
-                component.input_ports = [magnet_in]
-
-                magnet_out = OutputPort(component, eigenvalue=0.5)
-                magnet_out.position_on_right_edge(vertical_offset=0)
-                component.output_ports = [magnet_out]
-
             elif comp_type == "counter":
-                label = comp_data.get("label", "Counter")
-                component = ParticleCounter(x, y, label=label)
+                component = self.add_counter(x, y, label=comp_data.get("label", "Counter"))
                 component.set_count(comp_data.get("count", 0))
-
-                # Create ports
-                counter_in = InputPort(component)
-                counter_in.position_on_left_edge(vertical_offset=0)
-                component.input_ports = [counter_in]
 
             else:
                 raise ValueError(f"Unknown component type: {comp_type}")
 
-            # Add to scene and component list
-            self._scene.addItem(component)
-            self._components.append(component)
-            id_to_component[comp_id] = component
+            id_to_component[comp_data["id"]] = component
 
-        # Recreate connections
         for conn_data in data["connections"]:
-            source_id = conn_data["source_id"]
-            dest_id = conn_data["dest_id"]
-            output_index = conn_data["output_index"]
-
-            source_comp = id_to_component[source_id]
-            dest_comp = id_to_component[dest_id]
-
-            source_port = source_comp.output_ports[output_index]
+            source_comp = id_to_component[conn_data["source_id"]]
+            dest_comp = id_to_component[conn_data["dest_id"]]
+            source_port = source_comp.output_ports[conn_data["output_index"]]
             dest_port = dest_comp.input_ports[0]  # All components have single input
-
-            # Create wire
-            wire = WireItem(source_port, dest_port)
-            self._scene.addItem(wire)
-
-            # Create connection
-            connection = Connection(source_port, dest_port, wire)
-            self._connections.append(connection)
-
-            # Update apparatus graph
-            self._apparatus_graph.append((source_comp, output_index, dest_comp))
-
-        # Update coherent mode checkboxes based on topology
-        self._update_coherent_checkboxes()
+            if self.connect_ports(source_port, dest_port) is None:
+                raise ValueError("File contains an invalid connection")
 
     def clear_scene(self):
         """Clear all components and connections from the scene."""
-        # Remove all wires
-        for connection in list(self._connections):
-            self.delete_wire(connection.wire_item)
-
-        # Remove all components
         for component in list(self._components):
-            self._scene.removeItem(component)
-
-        # Clear lists
-        self._components = []
-        self._connections = []
-        self._apparatus_graph = []
+            self.delete_component(component)
 
         # Reset component placement position
         self._next_component_x = 100

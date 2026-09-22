@@ -27,8 +27,8 @@ class Connection:
         self.wire_item = wire_item
 
         # Register connection with ports
-        source_port.connection = self
-        dest_port.connection = self
+        source_port.connections.append(self)
+        dest_port.connections.append(self)
 
 
 class WireItem(QGraphicsPathItem):

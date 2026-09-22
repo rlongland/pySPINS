@@ -46,11 +46,11 @@ class MainWindow(QMainWindow):
         add_analyzer_one = QAction(self._load_icon("add_analyzer.svg"), "Add Analyzer (s=1)", self)
         add_magnet = QAction(self._load_icon("add_magnet.svg"), "Add Magnet", self)
         add_counter = QAction(self._load_icon("add_counter.svg"), "Add Counter", self)
-        add_gun.triggered.connect(self._canvas.add_gun)
+        add_gun.triggered.connect(lambda: self._canvas.add_gun())
         add_analyzer_half.triggered.connect(lambda: self._canvas.add_analyzer(spin_type=0.5))
         add_analyzer_one.triggered.connect(lambda: self._canvas.add_analyzer(spin_type=1.0))
-        add_magnet.triggered.connect(self._canvas.add_magnet)
-        add_counter.triggered.connect(self._canvas.add_counter)
+        add_magnet.triggered.connect(lambda: self._canvas.add_magnet())
+        add_counter.triggered.connect(lambda: self._canvas.add_counter())
         for a in (add_gun, add_analyzer_half, add_analyzer_one, add_magnet, add_counter):
             comp_toolbar.addAction(a)
 

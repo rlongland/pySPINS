@@ -3,7 +3,7 @@
 import math
 import numpy as np
 from PySide6.QtGui import QMouseEvent
-from pyspins.physics.states import SpinState
+from pyspins.physics.operators import rotation_operator
 from .base import ApparatusItem
 
 
@@ -36,27 +36,10 @@ class SpinRotationMagnet(ApparatusItem):
         self.input_ports = []
         self.output_ports = []  # Will be populated when Port class exists
 
-    def simulate(self, state: SpinState, output_index: int = 0) -> SpinState:
-        """
-        Apply rotation to the spin state.
-
-        Applies rotation operator exp(-i * beta * Sx / hbar) where Sx is the
-        x-component of the spin operator. Uses hbar=1 convention.
-
-        Args:
-            state: Input SpinState to rotate
-            output_index: Ignored (magnet has single output)
-
-        Returns:
-            SpinState: Rotated state after applying rotation operator
-        """
-        from pyspins.physics.operators import rotation_operator
-
-        # Apply rotation about x-axis by angle beta
-        # rotation_operator(s, axis, angle) returns exp(-i * angle * n̂·S / hbar)
+    def transfer(self, vector, s: float):
+        """Rotate the amplitude by exp(-i β Sx / ℏ) (ℏ = 1)."""
         x_axis = np.array([1.0, 0.0, 0.0])
-        R = rotation_operator(state.s, x_axis, self.beta)
-        return SpinState(R @ state.vector, state.s)
+        return [rotation_operator(s, x_axis, self.beta) @ vector]
 
     def set_beta(self, beta: float):
         """

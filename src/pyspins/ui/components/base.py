@@ -74,16 +74,17 @@ class ApparatusItem(QGraphicsRectItem):
             self.CORNER_RADIUS
         )
 
-    def simulate(self, state, output_index: int = 0):
+    def transfer(self, vector, s: float):
         """
-        Simulate particle passing through this component.
+        Propagate an (unnormalized) spin amplitude through this component.
 
         Args:
-            state: SpinState representing the incoming particle
-            output_index: Which output port the particle exits from (for analyzers)
+            vector: Incoming amplitude as a complex numpy array
+            s: Spin quantum number of the particle (0.5 or 1.0)
 
         Returns:
-            SpinState representing the outgoing particle, or None for counters
+            List of outgoing amplitudes, one per output port index,
+            or None for terminal components (counters)
         """
         raise NotImplementedError
 
@@ -121,12 +122,6 @@ class ApparatusItem(QGraphicsRectItem):
 
     def _update_connected_wires(self):
         """Update all wires connected to this component's ports."""
-        # Update wires from input ports
-        for port in self.input_ports:
-            if hasattr(port, 'connection') and port.connection is not None:
-                port.connection.wire_item.update_path()
-
-        # Update wires from output ports
-        for port in self.output_ports:
-            if hasattr(port, 'connection') and port.connection is not None:
-                port.connection.wire_item.update_path()
+        for port in self.input_ports + self.output_ports:
+            for connection in port.connections:
+                connection.wire_item.update_path()

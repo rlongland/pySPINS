@@ -62,17 +62,8 @@ class ParticleGun(ApparatusItem):
 
         self._refresh_label()
 
-    def simulate(self, state=None, output_index: int = 0) -> SpinState:
-        """
-        Emit a particle in the gun's configured spin state.
-
-        Args:
-            state: Ignored (gun is always first in chain)
-            output_index: Ignored (gun has single output)
-
-        Returns:
-            SpinState: The initial state configured for this gun
-        """
+    def emit(self) -> SpinState:
+        """Return the spin state of an emitted particle."""
         return SpinState(self._initial_state_vector, self._spin_type)
 
     def set_spin_type(self, s: float):

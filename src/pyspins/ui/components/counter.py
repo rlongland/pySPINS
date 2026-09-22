@@ -1,6 +1,5 @@
 """Counter component - terminal component that counts detected particles."""
 
-from pyspins.physics.states import SpinState
 from .base import ApparatusItem
 
 
@@ -33,23 +32,13 @@ class ParticleCounter(ApparatusItem):
         self.input_ports = []  # Will be populated when Port class exists
         self.output_ports = []  # Counters are terminal - no outputs
 
-    def simulate(self, state: SpinState, output_index: int = 0):
-        """
-        Count the particle (terminal component).
-
-        Args:
-            state: Incoming SpinState (acknowledged but not modified)
-            output_index: Ignored (counters have no outputs)
-
-        Returns:
-            None (terminal component)
-        """
-        # Counter is terminal - doesn't output anything
+    def transfer(self, vector, s: float):
+        """Counters are terminal: the particle is detected here."""
         return None
 
-    def increment(self):
-        """Increment the counter by one."""
-        self._count += 1
+    def increment(self, n: int = 1):
+        """Increment the counter by n (default one)."""
+        self._count += n
         self._update_label()
 
     def reset(self):

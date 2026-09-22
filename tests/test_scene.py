@@ -1,0 +1,185 @@
+"""Tests for building, wiring and simulating apparatus on the real canvas."""
+
+import json
+
+import pytest
+
+from pyspins.physics.network import LOST
+from pyspins.ui.canvas import ExperimentCanvas
+from pyspins.ui.components.analyzer import SternGerlachAnalyzer
+from pyspins.ui.components.counter import ParticleCounter
+from pyspins.ui.connections import WireItem
+
+
+@pytest.fixture
+def canvas(qapp):
+    return ExperimentCanvas()
+
+
+@pytest.fixture
+def empty_canvas(canvas):
+    canvas.clear_scene()
+    return canvas
+
+
+def _wires(canvas):
+    return [item for item in canvas.scene().items() if isinstance(item, WireItem)]
+
+
+def _counters(canvas):
+    return [c for c in canvas._components if isinstance(c, ParticleCounter)]
+
+
+def test_default_scene_has_visible_wires(canvas):
+    assert len(canvas._connections) == 3
+    assert len(_wires(canvas)) == 3
+    for connection in canvas._connections:
+        assert connection in connection.source_port.connections
+        assert connection in connection.dest_port.connections
+
+
+def test_default_scene_ports_are_occupied(canvas):
+    gun = canvas._components[0]
+    sg = canvas._components[1]
+    assert canvas.connect_ports(gun.output_ports[0], sg.input_ports[0]) is None
+    assert len(canvas._connections) == 3
+
+
+def test_default_scene_wire_can_be_deleted(canvas):
+    upper = canvas._connections[1]
+    canvas.delete_wire(upper.wire_item)
+    assert len(canvas._connections) == 2
+    assert len(_wires(canvas)) == 2
+    assert not upper.source_port.connections
+    probs = canvas.outcome_probabilities()
+    assert probs == {LOST: pytest.approx(1.0)}
+
+
+def test_default_scene_saves_connections(canvas):
+    data = canvas.to_json()
+    assert len(data["connections"]) == 3
+
+
+def test_default_scene_batch(canvas):
+    canvas.run_batch(1000)
+    upper, lower = sorted(_counters(canvas), key=lambda c: c.y())
+    assert upper.get_count() == 1000
+    assert lower.get_count() == 0
+
+
+def test_run_single_adds_one_particle(canvas):
+    canvas.run_single()
+    canvas.run_single()
+    assert sum(c.get_count() for c in _counters(canvas)) == 2
+
+
+def _build_recombination(canvas):
+    """Gun(+z) → SGz(+) → SGx (both outputs into) → SGz → two counters."""
+    gun = canvas.add_gun(0, 0)
+    z1 = canvas.add_analyzer(0.5, 100, 0)
+    x = canvas.add_analyzer(0.5, 200, 0, axis_label="+x")
+    z2 = canvas.add_analyzer(0.5, 300, 0)
+    up = canvas.add_counter(400, -50)
+    down = canvas.add_counter(400, 50)
+    pairs = [
+        (gun.output_ports[0], z1.input_ports[0]),
+        (z1.output_ports[0], x.input_ports[0]),
+        (x.output_ports[0], z2.input_ports[0]),
+        (x.output_ports[1], z2.input_ports[0]),
+        (z2.output_ports[0], up.input_ports[0]),
+        (z2.output_ports[1], down.input_ports[0]),
+    ]
+    for source, dest in pairs:
+        assert canvas.connect_ports(source, dest) is not None
+    return z2, up, down
+
+
+def test_input_port_accepts_two_beams(empty_canvas):
+    z2, _, _ = _build_recombination(empty_canvas)
+    assert len(z2.input_ports[0].connections) == 2
+    assert z2._coherent_checkbox is not None
+
+
+def test_recombination_coherent_and_incoherent(empty_canvas):
+    z2, up, down = _build_recombination(empty_canvas)
+
+    z2.coherent_mode = True
+    probs = empty_canvas.outcome_probabilities()
+    assert probs[up] == pytest.approx(1.0)
+    assert down not in probs
+
+    z2.coherent_mode = False
+    probs = empty_canvas.outcome_probabilities()
+    assert probs[up] == pytest.approx(0.5)
+    assert probs[down] == pytest.approx(0.5)
+
+
+def test_checkbox_hidden_after_one_beam_removed(empty_canvas):
+    z2, _, _ = _build_recombination(empty_canvas)
+    empty_canvas.delete_wire(z2.input_ports[0].connections[0].wire_item)
+    assert z2._coherent_checkbox is None
+
+
+def test_output_port_accepts_one_wire(empty_canvas):
+    gun = empty_canvas.add_gun(0, 0)
+    a = empty_canvas.add_counter(100, 0)
+    b = empty_canvas.add_counter(100, 100)
+    assert empty_canvas.connect_ports(gun.output_ports[0], a.input_ports[0])
+    assert empty_canvas.connect_ports(gun.output_ports[0], b.input_ports[0]) is None
+
+
+def test_loop_is_rejected(empty_canvas):
+    a = empty_canvas.add_analyzer(0.5, 0, 0)
+    b = empty_canvas.add_analyzer(0.5, 100, 0)
+    assert empty_canvas.connect_ports(a.output_ports[0], b.input_ports[0])
+    assert empty_canvas.connect_ports(b.output_ports[0], a.input_ports[0]) is None
+    assert empty_canvas.connect_ports(a.output_ports[1], a.input_ports[0]) is None
+
+
+def test_delete_component_removes_its_wires(canvas):
+    sg = next(c for c in canvas._components if isinstance(c, SternGerlachAnalyzer))
+    canvas.delete_component(sg)
+    assert canvas._connections == []
+    assert _wires(canvas) == []
+
+
+def test_json_round_trip_restores_recombination(empty_canvas, qapp):
+    z2, _, _ = _build_recombination(empty_canvas)
+    z2.coherent_mode = True
+    data = json.loads(json.dumps(empty_canvas.to_json()))
+
+    restored = ExperimentCanvas()
+    restored.from_json(data)
+    assert len(restored._connections) == 6
+    assert len(_wires(restored)) == 6
+    upper, lower = sorted(_counters(restored), key=lambda c: c.y())
+    probs = restored.outcome_probabilities()
+    assert probs[upper] == pytest.approx(1.0)
+    assert _topology(restored.to_json()) == _topology(data)
+
+
+def _topology(data):
+    """Connections keyed by component position rather than the per-save ids."""
+    index = {comp["id"]: i for i, comp in enumerate(data["components"])}
+    return sorted(
+        (index[c["source_id"]], c["output_index"], index[c["dest_id"]])
+        for c in data["connections"]
+    )
+
+
+def test_from_json_rejects_invalid_connection(empty_canvas):
+    data = {
+        "version": 1,
+        "components": [
+            {"id": "g", "type": "gun", "x": 0, "y": 0, "spin_type": 0.5,
+             "state_vector": [[1, 0], [0, 0]]},
+            {"id": "c", "type": "counter", "x": 100, "y": 0},
+        ],
+        "connections": [
+            {"source_id": "g", "output_index": 0, "dest_id": "c"},
+            {"source_id": "g", "output_index": 0, "dest_id": "c"},
+        ],
+    }
+    with pytest.raises(ValueError):
+        empty_canvas.from_json(data)
+

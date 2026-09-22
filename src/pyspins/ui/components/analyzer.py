@@ -3,8 +3,7 @@
 import numpy as np
 from PySide6.QtWidgets import QGraphicsSceneMouseEvent, QCheckBox, QGraphicsProxyWidget
 from PySide6.QtCore import Qt
-from pyspins.physics.states import SpinState
-from pyspins.physics.measurement import measure
+from pyspins.physics.operators import eigenstates
 from .base import ApparatusItem
 
 
@@ -49,20 +48,14 @@ class SternGerlachAnalyzer(ApparatusItem):
         self._coherent_checkbox = None
         self._checkbox_proxy = None
 
-    def simulate(self, state: SpinState, output_index: int = 0) -> SpinState:
-        """
-        Perform measurement along the configured axis.
+    def transfer(self, vector, s: float):
+        """Split the amplitude into its projections onto each eigenstate of the axis.
 
-        Args:
-            state: Incoming SpinState
-            output_index: Which output port to simulate (used for deterministic path tracing)
-
-        Returns:
-            SpinState: Post-measurement collapsed state
+        Output index i carries the component along the i-th eigenstate, in
+        descending eigenvalue order (upper port first).
         """
-        # Perform projective measurement
-        eigenvalue, post_state = measure(state, self._axis_vector)
-        return post_state
+        _, evecs = eigenstates(s, self._axis_vector)
+        return [ev * np.vdot(ev, vector) for ev in evecs]
 
     def set_axis(self, axis_label: str, phi_deg: float = 0.0):
         """
