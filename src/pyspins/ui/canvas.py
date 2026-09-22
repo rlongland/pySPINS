@@ -1,7 +1,7 @@
 import numpy as np
 from PySide6.QtWidgets import QGraphicsView, QGraphicsScene
-from PySide6.QtCore import Qt, QPointF, QRectF
-from PySide6.QtGui import QKeyEvent, QPainter, QImage
+from PySide6.QtCore import Qt, QMarginsF, QPointF, QRectF, QSizeF
+from PySide6.QtGui import QKeyEvent, QPageSize, QPainter, QImage, QPdfWriter
 
 from pyspins.ui.components.gun import ParticleGun
 from pyspins.ui.components.analyzer import SternGerlachAnalyzer
@@ -632,6 +632,16 @@ class ExperimentCanvas(QGraphicsView):
         self._next_component_x = 100
         self._next_component_y = 100
 
+    def new_scene(self):
+        """Replace everything on the canvas with the default apparatus."""
+        self.clear_scene()
+        self._build_default_scene()
+
+    def _export_rect(self) -> QRectF:
+        """Bounds of the apparatus with a small margin, for image export."""
+        padding = 20
+        return self._scene.itemsBoundingRect().adjusted(-padding, -padding, padding, padding)
+
     def export_to_png(self, file_path: str):
         """
         Export the current scene to a PNG image.
@@ -639,36 +649,45 @@ class ExperimentCanvas(QGraphicsView):
         Args:
             file_path: Path to save the PNG file
 
-        Uses QGraphicsScene.render() to draw the scene onto a QImage.
-        Only exports the bounding rect of items, not the full scene rect.
+        Only the apparatus is exported, not the whole empty scene rect, and it is
+        rendered at 2x for a crisp image in a student lab report.
         """
-        # Get the bounding rect of all items (avoid exporting huge empty scene)
-        items_rect = self._scene.itemsBoundingRect()
-
-        # Add padding around the content (20px on each side)
-        padding = 20
-        export_rect = items_rect.adjusted(-padding, -padding, padding, padding)
-
-        # Create QImage with appropriate size
-        # Use 2x scaling for high-DPI export
+        export_rect = self._export_rect()
         scale_factor = 2.0
-        image_width = int(export_rect.width() * scale_factor)
-        image_height = int(export_rect.height() * scale_factor)
+        image = QImage(
+            int(export_rect.width() * scale_factor),
+            int(export_rect.height() * scale_factor),
+            QImage.Format.Format_ARGB32,
+        )
+        image.fill(Qt.GlobalColor.white)
 
-        image = QImage(image_width, image_height, QImage.Format.Format_ARGB32)
-        image.fill(Qt.GlobalColor.white)  # White background
-
-        # Create painter and render scene onto image
         painter = QPainter(image)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
-
-        # Scale up for high-DPI
-        painter.scale(scale_factor, scale_factor)
-
-        # Render the scene
         self._scene.render(painter, QRectF(), export_rect)
         painter.end()
 
-        # Save to file
-        image.save(file_path, "PNG")
+        if not image.save(file_path, "PNG"):
+            raise OSError(f"Could not write {file_path}")
+
+    def export_to_pdf(self, file_path: str):
+        """
+        Export the current scene to a PDF, as vector graphics.
+
+        Args:
+            file_path: Path to save the PDF file
+        """
+        export_rect = self._export_rect()
+
+        writer = QPdfWriter(file_path)
+        writer.setResolution(300)
+        writer.setPageSize(QPageSize(
+            QSizeF(export_rect.width(), export_rect.height()),
+            QPageSize.Unit.Point, "apparatus", QPageSize.SizeMatchPolicy.ExactMatch,
+        ))
+        writer.setPageMargins(QMarginsF(0, 0, 0, 0))
+
+        painter = QPainter(writer)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        self._scene.render(painter, QRectF(), export_rect)
+        painter.end()
