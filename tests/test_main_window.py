@@ -1,6 +1,7 @@
 """Tests for the main window's menus, actions and exports."""
 
 import pytest
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QToolBar
 
 from pyspins.ui.main_window import MainWindow
@@ -100,3 +101,12 @@ def test_status_bar_follows_the_gun(window):
 
     window._canvas.delete_component(window._canvas._components[0])
     assert window._status.text().startswith("No gun")
+
+
+def test_toolbars_are_text_only(window):
+    toolbars = window.findChildren(QToolBar)
+    assert toolbars
+    for toolbar in toolbars:
+        assert toolbar.toolButtonStyle() == Qt.ToolButtonStyle.ToolButtonTextOnly
+        assert all(action.icon().isNull() for action in toolbar.actions())
+        assert all(action.text() for action in toolbar.actions())

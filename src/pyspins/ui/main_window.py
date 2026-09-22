@@ -1,9 +1,9 @@
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QMainWindow, QToolBar, QLabel, QFileDialog, QMessageBox
-from PySide6.QtGui import QAction, QKeySequence, QIcon
+from PySide6.QtGui import QAction, QKeySequence
 from pyspins.ui.canvas import ExperimentCanvas
 from pyspins.ui.dialogs import PhysicsReferenceDialog, AboutDialog
 import json
-from pathlib import Path
 
 
 class MainWindow(QMainWindow):
@@ -19,9 +19,6 @@ class MainWindow(QMainWindow):
 
         # Track current file path for Save/Save As
         self._current_file_path = None
-
-        # Icon base path
-        self._icon_path = Path(__file__).parent.parent / "resources" / "icons"
 
         self._actions = {}
         self._create_actions()
@@ -42,10 +39,9 @@ class MainWindow(QMainWindow):
             f"  |  Mode: {self._canvas.mode()}"
         )
 
-    def _add_action(self, name: str, text: str, handler, icon: str = None,
-                    shortcut=None) -> QAction:
+    def _add_action(self, name: str, text: str, handler, shortcut=None) -> QAction:
         """Create an action, shared between the menus and the toolbars."""
-        action = QAction(self._load_icon(icon) if icon else QIcon(), text, self)
+        action = QAction(text, self)
         if shortcut is not None:
             action.setShortcut(shortcut)
         action.triggered.connect(handler)
@@ -58,31 +54,26 @@ class MainWindow(QMainWindow):
 
         self._add_action("new", "&New", self._on_new,
                          shortcut=QKeySequence.StandardKey.New)
-        self._add_action("open", "&Open...", self._on_open, "open.svg",
-                         QKeySequence.StandardKey.Open)
-        self._add_action("save", "&Save", self._on_save, "save.svg",
-                         QKeySequence.StandardKey.Save)
-        self._add_action("save_as", "Save &As...", self._on_save_as, "save.svg",
-                         QKeySequence.StandardKey.SaveAs)
+        self._add_action("open", "&Open...", self._on_open, QKeySequence.StandardKey.Open)
+        self._add_action("save", "&Save", self._on_save, QKeySequence.StandardKey.Save)
+        self._add_action("save_as", "Save &As...", self._on_save_as, QKeySequence.StandardKey.SaveAs)
         self._add_action("export_png", "Export as &PNG...", self._on_export_png)
         self._add_action("export_pdf", "Export as P&DF...", self._on_export_pdf)
         self._add_action("exit", "E&xit", self.close, shortcut=QKeySequence.StandardKey.Quit)
 
         self._add_action("run_batch", "Run &Batch (10k)",
-                         lambda: self._run(batch=True), "run_batch.svg", "F5")
+                         lambda: self._run(batch=True), "F5")
         self._add_action("run_single", "Run &Single",
-                         lambda: self._run(batch=False), "run_single.svg", "F6")
-        self._add_action("reset", "&Reset Counts", self._on_reset, "reset.svg", "F7")
+                         lambda: self._run(batch=False), "F6")
+        self._add_action("reset", "&Reset Counts", self._on_reset, "F7")
 
-        self._add_action("add_gun", "Add Gun", lambda: canvas.add_gun(), "add_gun.svg")
+        self._add_action("add_gun", "Add Gun", lambda: canvas.add_gun())
         self._add_action("add_analyzer_half", "Add Analyzer (s=1/2)",
-                         lambda: canvas.add_analyzer(spin_type=0.5), "add_analyzer.svg")
+                         lambda: canvas.add_analyzer(spin_type=0.5))
         self._add_action("add_analyzer_one", "Add Analyzer (s=1)",
-                         lambda: canvas.add_analyzer(spin_type=1.0), "add_analyzer.svg")
-        self._add_action("add_magnet", "Add Magnet", lambda: canvas.add_magnet(),
-                         "add_magnet.svg")
-        self._add_action("add_counter", "Add Counter", lambda: canvas.add_counter(),
-                         "add_counter.svg")
+                         lambda: canvas.add_analyzer(spin_type=1.0))
+        self._add_action("add_magnet", "Add Magnet", lambda: canvas.add_magnet())
+        self._add_action("add_counter", "Add Counter", lambda: canvas.add_counter())
 
         self._add_action("physics_reference", "&Physics Reference",
                          self._on_physics_reference)
@@ -91,31 +82,19 @@ class MainWindow(QMainWindow):
     def _create_toolbars(self):
         """Simulation and component toolbars, sharing the menu actions."""
         sim_toolbar = QToolBar("Simulation")
+        sim_toolbar.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
         self.addToolBar(sim_toolbar)
         for name in ("run_batch", "run_single", "reset"):
             sim_toolbar.addAction(self._actions[name])
 
         # Req 26: separate buttons for spin-1/2 and spin-1 analyzers
         comp_toolbar = QToolBar("Add Components")
+        comp_toolbar.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
         self.addToolBar(comp_toolbar)
         for name in ("add_gun", "add_analyzer_half", "add_analyzer_one",
                      "add_magnet", "add_counter"):
             comp_toolbar.addAction(self._actions[name])
 
-    def _load_icon(self, icon_name: str) -> QIcon:
-        """
-        Load an icon from the resources/icons directory.
-
-        Args:
-            icon_name: Name of the icon file (without path)
-
-        Returns:
-            QIcon object, or empty QIcon if file doesn't exist
-        """
-        icon_file = self._icon_path / icon_name
-        if icon_file.exists():
-            return QIcon(str(icon_file))
-        return QIcon()  # Empty icon as fallback
 
     def _create_menu_bar(self):
         """Create the File, Simulation and Help menus (Req 18)."""
