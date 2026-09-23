@@ -47,6 +47,14 @@ pytest
 
 ---
 
+## License
+
+pySPINS is released under the [MIT License](LICENSE) — an independent reimplementation
+written from published descriptions of the OSP SPINS program, containing no code from
+the original.
+
+---
+
 ## Credits
 
 Based on the SPINS Java applet originally written by D. V. Schroeder

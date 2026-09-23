@@ -83,7 +83,7 @@ class AboutDialog(QDialog):
             <div class="info-section">
                 <p><span class="label">Description:</span> Interactive Stern-Gerlach quantum spin simulation for physics education</p>
                 <p><span class="label">Author:</span> Richard Longland</p>
-                <p><span class="label">License:</span> GNU General Public License v3 or later (GPLv3+)</p>
+                <p><span class="label">License:</span> MIT License</p>
             </div>
 
             <h2>About This Application</h2>
@@ -117,9 +117,9 @@ class AboutDialog(QDialog):
                     at Oregon State University.
                 </p>
                 <p>
-                    The original OSP SPINS application and curriculum materials are used under
-                    the GNU General Public License. This Python/Qt port maintains compatibility
-                    with the OSP pedagogical approach and experiment design.
+                    pySPINS is an independent reimplementation written from published
+                    descriptions of the OSP SPINS program; it contains no code from the
+                    original. It follows the OSP pedagogical approach and experiment design.
                 </p>
                 <p>
                     For more information, visit:
@@ -139,7 +139,7 @@ class AboutDialog(QDialog):
 
             <p style="margin-top: 30px; color: #757575; font-size: 12px;">
                 Copyright © 2026 Richard Longland<br>
-                Released under the GNU General Public License v3 or later
+                Released under the MIT License
             </p>
         </body>
         </html>
